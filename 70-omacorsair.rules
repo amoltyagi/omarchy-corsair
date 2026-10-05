@@ -1,0 +1,2 @@
+# Grant the active local desktop user access to the K65 Plus vendor interface.
+ACTION!="remove", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="2b11", ENV{ID_USB_INTERFACE_NUM}=="01", TAG+="uaccess"

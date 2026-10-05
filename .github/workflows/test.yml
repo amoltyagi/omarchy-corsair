@@ -1,0 +1,23 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Unit tests (no keyboard required)
+        run: python -m unittest discover -s tests -v
+      - name: Shell script syntax
+        run: bash -n install.sh install-device-access.sh
+      - name: Manifest JSON syntax
+        run: python -m json.tool manifest.json > /dev/null

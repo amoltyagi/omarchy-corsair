@@ -1,0 +1,22 @@
+SPDX-License-Identifier: GPL-3.0-only
+
+Omacorsair is licensed under the GNU General Public License, version 3.
+Copyright (C) 2026 case (GitHub: amoltyagi)
+
+The Corsair K65 Plus protocol implementation is adapted from OpenLinkHub,
+Copyright (C) jurkovic-nikola and contributors, licensed under GPL version 3.
+Upstream: https://github.com/jurkovic-nikola/OpenLinkHub
+Reference commit: 279513582cd34c546b8dc4b601b7e057cc9c7520
+Reference file: src/devices/k65plusWU/k65plusWU.go
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, version 3 of the License.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+The complete license text is included in LICENSE and is also available at:
+https://www.gnu.org/licenses/gpl-3.0.txt
