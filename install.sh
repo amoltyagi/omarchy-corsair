@@ -12,8 +12,18 @@ else
   mkdir -p "$(dirname "$destination")"
   ln -s "$source_dir" "$destination"
 fi
-if [[ -f "$HOME/.config/omarchy/shell.json" ]]; then
-  cp -p "$HOME/.config/omarchy/shell.json" "$HOME/.config/omarchy/shell.json.before-omacorsair.$(date +%s)"
+# Back up shell.json only when it differs from the newest backup, so re-running
+# the installer does not pile up identical copies. Nothing is ever deleted.
+shell_json="$HOME/.config/omarchy/shell.json"
+if [[ -f "$shell_json" ]]; then
+  newest_backup=""
+  # The suffix is an epoch timestamp, so glob (lexical) order is chronological.
+  for backup in "$shell_json".before-omacorsair.*; do
+    [[ -f "$backup" ]] && newest_backup="$backup"
+  done
+  if [[ -z "$newest_backup" ]] || ! cmp -s "$shell_json" "$newest_backup"; then
+    cp -p "$shell_json" "$shell_json.before-omacorsair.$(date +%s)"
+  fi
 fi
 omarchy-shell shell rescanPlugins
 # Registry discovery is asynchronous; IPC returns before the scan completes.
