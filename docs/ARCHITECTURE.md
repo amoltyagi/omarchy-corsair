@@ -46,7 +46,10 @@ Panel.qml ──"omacorsair.py status"──▶ config + status.json + preview +
 - If the daemon exits while the service is not stopping, the service logs `helper exited (<code>), retrying in 5 seconds` and restarts it after 5 s (`retry` timer). This applies to any exit code, including a clean exit after `SIGTERM`.
 - When the service is destroyed (plugin disabled or shell stops), it sets `stopping`, cancels the retry, and sends `SIGTERM`.
 - The daemon handles `SIGTERM` and `SIGINT` by setting `STOP`. The loop ends, and `Keyboard.close()` sends the hardware-mode command before closing the device, so the keyboard returns to its built-in lighting.
-- Device or I/O errors (`OSError`, `ValueError`, `UnicodeError`) inside a loop iteration do not end the process. The daemon closes the dial and keyboard, writes an error status, logs the message once per distinct text, and retries on the next iteration (re-discovering the device). This handles unplug/replug.
+- Device or I/O errors (`OSError`, `ValueError`, `UnicodeError`) inside a loop iteration do not end the process, and a single failure does not drop the connection. The daemon logs the message once per distinct text, writes an error status, forces the next pass to resend the whole frame (`applied = None`, so a half-sent frame is repainted) and retries with the device still open. The connection is torn down (dial and keyboard closed, which sends `HARDWARE_MODE`, device re-discovered on the next pass) only when
+  - the error means the device is gone: `ENODEV`, `EIO`, `EPIPE`, `ENOENT` or `ENXIO` (`device_gone()`), which covers unplug/replug; or
+  - `MAX_CONSECUTIVE_FAILURES` (3) loop passes failed in a row. A failing transfer blocks for 1.0 to 1.5 s and the loop adds 0.08 to 0.25 s, so three failures mean at least about three seconds of a silent device, which is no longer a blip but still recovers quickly. Any successful pass resets the count.
+  A failed connection handshake (the firmware query right after opening) releases that candidate immediately; nothing has been sent in software mode yet.
 - Each `Panel.qml` query (`status`, `set`, layout calls) is a short-lived `python3 -I` process.
 - To restart the daemon after editing code: `pkill -TERM -f '[o]macorsair.py daemon'`. The service respawns it after 5 s.
 - `Keyboard` takes an exclusive non-blocking `flock` on interface 01. A second daemon (or another RGB tool holding that lock) fails with an error until the first exits.
@@ -98,7 +101,7 @@ Animated looks are functions of a phase `t`. The phase advances at `speed_factor
 - Lighting is volatile. The keyboard reverts when the daemon stops sending keepalives or the keyboard is power-cycled. Nothing is written to onboard flash, profiles or firmware.
 - `hardware` mode ("Built-in lighting"): the daemon closes the dial and the keyboard (which sends `HARDWARE_MODE`) and idles. It still reports `connected` by checking that the device exists.
 - `theme` mode with no `keyboard.rgb`: `render_frame` returns `None`; the daemon does not touch the lighting but still sends keepalives if software mode is already active.
-- The daemon sends `HARDWARE_MODE` on normal stop (`Keyboard.close()`) and when the device is released after an error, so a normal shutdown always restores built-in lighting. A crash or `SIGKILL` cannot.
+- The daemon sends `HARDWARE_MODE` on normal stop (`Keyboard.close()`) and when the connection is torn down after an error (see above), so a normal shutdown always restores built-in lighting. A crash or `SIGKILL` cannot.
 - **Volume dial.** In software mode the firmware stops sending the dial as media keys on interface 00 and reports it on interface 02. While the keyboard is in software mode the daemon opens interface 02 read-only (`Dial`), maps reports with `dial_action()` and runs `omarchy-audio-output-volume` (found via `PATH`, then `/usr/share/omarchy/bin`), falling back to `wpctl`. Turns that arrive while a command is still running are summed into one command. Mute fires once per press. The dial is closed in `hardware` mode and on errors. `status.json` reports `dial: true/false`.
 
 ## Tests

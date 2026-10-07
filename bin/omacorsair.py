@@ -9,6 +9,7 @@ the keyboard input interface or writes onboard profiles/key assignments.
 
 import argparse
 import colorsys
+import errno
 import fcntl
 import json
 import math
@@ -38,6 +39,14 @@ KEEPALIVE = bytes.fromhex("12")
 DIAL_INTERFACE = "02"
 DIAL_STEP = 5
 VOLUME_COMMAND = "omarchy-audio-output-volume"
+# A failed transfer is usually a one-off (a missed reply, a busy bus) and must not
+# bounce the lighting through hardware mode. Errors that mean the device is gone
+# tear the connection down at once; anything else only after this many failed loop
+# passes in a row. A failing transfer blocks for 1.0 to 1.5 s and the loop adds
+# 0.08 to 0.25 s, so three in a row is at least ~3 s of a silent device, long
+# enough to rule out a blip and short enough to start recovering quickly.
+MAX_CONSECUTIVE_FAILURES = 3
+DEVICE_GONE_ERRNOS = frozenset({errno.ENODEV, errno.EIO, errno.EPIPE, errno.ENOENT, errno.ENXIO})
 STOP = False
 CONFIG_PATH = Path.home() / ".config/omarchy/omacorsair.json"
 STATUS_PATH = Path.home() / ".local/state/omarchy/omacorsair/status.json"
@@ -347,7 +356,14 @@ def color_packets(color):
         yield endpoint, buffer[offset:offset + 61]
 
 
+def device_gone(error):
+    """True for errors that mean the keyboard was unplugged, not that one transfer failed."""
+    return isinstance(error, OSError) and error.errno in DEVICE_GONE_ERRNOS
+
+
 class Keyboard:
+    leds_active = False  # SOFTWARE_MODE + ACTIVATE_LEDS completed on this connection
+
     def __init__(self, path):
         self.path = path
         self.fd = os.open(path, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW)
@@ -397,11 +413,15 @@ class Keyboard:
         return f"{data[3]}.{data[4]}.{int.from_bytes(data[5:7], 'little')}"
 
     def apply(self, color):
-        if not self.software_mode:
-            self.transfer(SOFTWARE_MODE)
-            self.software_mode = True
+        if not self.leds_active:
+            # Each step is recorded as soon as it succeeded, so a retry after a failed
+            # transfer neither repeats SOFTWARE_MODE nor skips ACTIVATE_LEDS.
+            if not self.software_mode:
+                self.transfer(SOFTWARE_MODE)
+                self.software_mode = True
             self.transfer(ACTIVATE_LEDS)
             time.sleep(0.5)
+            self.leds_active = True
         for endpoint, payload in color_packets(color):
             self.transfer(endpoint, payload)
 
@@ -511,6 +531,7 @@ def run_daemon(raw=False):
     next_dial_attempt = 0
     dial_error = None
     animation = restart_animation(time.monotonic(), DEFAULT_CONFIG["speed"])
+    failures = 0
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
@@ -527,12 +548,13 @@ def run_daemon(raw=False):
                 target = render_frame(config, color, raw, phase=animation_phase(animation, now))
                 if config["mode"] == "hardware":
                     if dial:
-                        dial.close()
-                        dial = None
+                        closing, dial = dial, None
+                        closing.close()
                     if keyboard:
-                        keyboard.close()
-                        keyboard = None
-                        applied = None
+                        # Drop the reference first: close() always releases the fd, even
+                        # when HARDWARE_MODE fails, so it must not be closed twice.
+                        closing, keyboard, applied = keyboard, None, None
+                        closing.close()
                 elif target is None:
                     # A theme without a keyboard color leaves current lighting alone.
                     if keyboard and keyboard.software_mode and time.monotonic() >= next_keepalive:
@@ -542,8 +564,14 @@ def run_daemon(raw=False):
                     if keyboard is None:
                         path = next(candidates(), None)
                         if path is not None:
-                            keyboard = Keyboard(path)
-                            log(f"connected {path}, firmware {keyboard.firmware()}")
+                            candidate = Keyboard(path)
+                            try:
+                                firmware = candidate.firmware()
+                            except BaseException:
+                                candidate.close()
+                                raise
+                            keyboard = candidate
+                            log(f"connected {path}, firmware {firmware}")
                             applied = None
                     if keyboard:
                         if target != applied:
@@ -569,6 +597,7 @@ def run_daemon(raw=False):
                             hint = "; re-run install-device-access.sh" if isinstance(error, PermissionError) else ""
                             log(f"volume dial unavailable: {error}{hint}")
                 last_error = None
+                failures = 0
                 status = {"connected": keyboard is not None if config["mode"] != "hardware" else next(candidates(), None) is not None,
                           "applied": applied is not None, "mode": config["mode"], "settings": config,
                           **animation, "dial": dial is not None, "error": ""}
@@ -577,16 +606,23 @@ def run_daemon(raw=False):
                 if message != last_error:
                     log(message)
                 last_error = message
-                if dial:
-                    dial.close()
-                    dial = None
-                if keyboard:
-                    try:
-                        keyboard.close()
-                    except OSError:
-                        pass
-                    keyboard = None
-                    applied = None
+                failures += 1
+                # The failed pass may have stopped halfway through a frame (or never
+                # reached the device), so whatever comes next must be sent in full.
+                applied = None
+                if device_gone(error) or failures >= MAX_CONSECUTIVE_FAILURES:
+                    if not device_gone(error) and keyboard:
+                        log(f"{failures} errors in a row, reconnecting")
+                    failures = 0
+                    if dial:
+                        dial.close()
+                        dial = None
+                    if keyboard:
+                        try:
+                            keyboard.close()
+                        except OSError:
+                            pass
+                        keyboard = None
                 status = {"connected": False, "applied": False, "error": message}
             if status != last_status:
                 atomic_json(STATUS_PATH, status)
