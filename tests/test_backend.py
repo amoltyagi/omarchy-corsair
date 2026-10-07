@@ -1,5 +1,9 @@
+import contextlib
 import importlib.util
+import io
+import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -159,6 +163,101 @@ class ProtocolTests(unittest.TestCase):
         for speed in (0, 9, 101, True, "50"):
             with self.assertRaises(ValueError):
                 backend.validate_config({"speed": speed})
+
+    def test_speed_change_keeps_animation_phase_continuous(self):
+        origin = backend.restart_animation(100.0, 50)
+        now = 103.137
+        before = backend.animation_phase(origin, now)
+        retimed = backend.retime_animation(origin, now, 20)
+        self.assertAlmostEqual(backend.animation_phase(retimed, now), before)
+        # From the change on, time runs at the new speed.
+        self.assertAlmostEqual(backend.animation_phase(retimed, now + 2), before + 2 * backend.speed_factor(20))
+        for mode in backend.ANIMATED_MODES:
+            config = backend.validate_config({"mode": mode})
+            frame_before = backend.render_frame(config, phase=before)
+            frame_after = backend.render_frame(config, phase=backend.animation_phase(retimed, now + 1e-6))
+            self.assertEqual(len(frame_before), 371)
+            self.assertLessEqual(max(abs(a - b) for a, b in zip(frame_before, frame_after)), 1, mode)
+        # The old behaviour (rescaling the whole elapsed time) jumped.
+        config = backend.validate_config({"mode": "rainbowwave"})
+        jumped = backend.render_frame(backend.validate_config({"mode": "rainbowwave", "speed": 20}), elapsed=now - 100.0)
+        self.assertNotEqual(jumped, backend.render_frame(config, phase=before))
+
+    def test_status_phase_matches_daemon_phase_and_old_status_files(self):
+        config = backend.validate_config({"mode": "duotone", "speed": 20})
+        origin = backend.retime_animation(backend.restart_animation(100.0, 50), 110.0, 20)
+        device = {"mode": "duotone", "settings": config, **origin}
+        for now in (110.0, 110.4, 250.0):
+            self.assertAlmostEqual(backend.status_phase(device, config, now), backend.animation_phase(origin, now))
+        # Old daemons wrote only `started`: phase 0 at that time, configured speed.
+        old = {"mode": "duotone", "started": 100.0}
+        self.assertAlmostEqual(backend.status_phase(old, config, 104.0), 4.0 * backend.speed_factor(20))
+        # A mode the daemon has not picked up yet restarts at phase 0; bad values are ignored.
+        self.assertEqual(backend.status_phase({"mode": "aurora", "started": 1.0}, config, 50.0), 0.0)
+        junk = {"mode": "duotone", "started": "x", "phase0": float("nan"), "speed": 7}
+        self.assertEqual(backend.status_phase(junk, config, 50.0), 0.0)
+        self.assertEqual(backend.status_phase({"connected": False, "error": "x"}, config, 50.0), 0.0)
+
+    def test_daemon_keeps_phase_across_speed_change_and_preview_agrees(self):
+        configs = [backend.validate_config({"mode": "rainbowwave", "speed": speed}) for speed in (50, 50, 20, 20)]
+        clock = [1000.0]
+        times, frames, statuses = [], [], []
+        keyboard = Mock()
+        keyboard.firmware.return_value = "5.26.154"
+        keyboard.apply.side_effect = lambda frame: (frames.append(frame), times.append(clock[0]))
+        reads = iter(configs)
+
+        def tick(_duration):
+            clock[0] += 0.5
+            if len(frames) == len(configs):
+                backend.STOP = True
+
+        with patch.object(backend, "STOP", False), \
+                patch.object(backend, "read_config", side_effect=lambda: next(reads)), \
+                patch.object(backend, "candidates", side_effect=lambda: iter([Path("/dev/hidraw2")])), \
+                patch.object(backend, "Keyboard", return_value=keyboard), \
+                patch.object(backend, "open_dial", side_effect=OSError("no dial")), \
+                patch.object(backend, "atomic_json", side_effect=lambda path, value: statuses.append(value)), \
+                patch.object(backend, "log"), patch.object(backend.signal, "signal"), \
+                patch.object(backend.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(backend.time, "sleep", side_effect=tick):
+            backend.run_daemon()
+        self.assertEqual(len(frames), 4)
+        t0, change = times[0], times[2]
+        for index, (when, frame) in enumerate(zip(times, frames)):
+            phase = (when - t0) * backend.speed_factor(50) if when < change else \
+                (change - t0) * backend.speed_factor(50) + (when - change) * backend.speed_factor(20)
+            self.assertEqual(frame, backend.render_frame(configs[index], phase=phase), index)
+        # Status is rewritten only when the origin or settings change, not per frame.
+        self.assertEqual(len(statuses), 2)
+        self.assertEqual((statuses[0]["started"], statuses[0]["phase0"], statuses[0]["speed"]), (t0, 0.0, 50))
+        self.assertEqual((statuses[1]["started"], statuses[1]["speed"]), (change, 20))
+        self.assertAlmostEqual(statuses[1]["phase0"], (change - t0) * backend.speed_factor(50))
+        # The `status` command, run later by the panel, previews the device's current frame.
+        with tempfile.TemporaryDirectory() as directory:
+            config_path, status_path = Path(directory) / "config.json", Path(directory) / "status.json"
+            config_path.write_text(json.dumps(configs[-1]))
+            status_path.write_text(json.dumps(statuses[-1]))
+            for now in (times[-1], times[-1] + 0.3):
+                clock[0] = now
+                out = io.StringIO()
+                with patch.object(backend, "CONFIG_PATH", config_path), patch.object(backend, "STATUS_PATH", status_path), \
+                        patch.object(backend.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(sys, "argv", ["omacorsair.py", "status"]), contextlib.redirect_stdout(out):
+                    backend.main()
+                preview = json.loads(out.getvalue())["preview"]
+                device_frame = backend.render_frame(configs[-1], phase=backend.animation_phase(statuses[-1], now))
+                expected = [["#" + device_frame[offset:offset + 3].hex() for offset in offsets] for offsets in backend.ROW_OFFSETS]
+                self.assertEqual(preview, expected)
+
+    def test_mode_change_restarts_animation(self):
+        origin = backend.restart_animation(100.0, 50)
+        restarted = backend.restart_animation(130.0, 50)
+        self.assertEqual(backend.animation_phase(restarted, 130.0), 0.0)
+        config = backend.validate_config({"mode": "aurora"})
+        self.assertEqual(backend.render_frame(config, phase=backend.animation_phase(restarted, 130.0)),
+                         backend.render_frame(config, elapsed=0))
+        self.assertGreater(backend.animation_phase(origin, 130.0), 0)
 
     def test_animated_daemon_does_not_log_or_write_status_per_frame(self):
         config = backend.validate_config({"mode": "aurora"})

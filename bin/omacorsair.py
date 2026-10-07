@@ -209,7 +209,45 @@ def animated_rgb(mode, x, y, seed, t, base, accent):
     raise ValueError("unknown animated effect")
 
 
-def render_frame(config, theme_color=None, raw=False, elapsed=0):
+def speed_factor(speed):
+    """Animation clock rate (phase units per second) for a 10..100 speed setting."""
+    return 0.2 + speed * 0.016
+
+
+def restart_animation(now, speed):
+    """A fresh animation clock: phase 0 at `now`, running at `speed`."""
+    return {"started": now, "phase0": 0.0, "speed": speed}
+
+
+def retime_animation(origin, now, speed):
+    """Change speed without a jump: bank the phase reached so far as the new origin."""
+    return {"started": now, "phase0": animation_phase(origin, now), "speed": speed}
+
+
+def animation_phase(origin, now):
+    return origin["phase0"] + max(0.0, now - origin["started"]) * speed_factor(origin["speed"])
+
+
+def status_phase(device, config, now):
+    """The daemon's current animation phase, rebuilt from status.json for the preview.
+
+    Status files from older versions have no phase0/speed; they mean phase 0 and the
+    configured speed, which is what the old formula computed.
+    """
+    def number(key, default):
+        value = device.get(key)
+        return float(value) if type(value) in (int, float) and math.isfinite(value) else default
+
+    if device.get("mode", config["mode"]) != config["mode"]:
+        return 0.0  # the daemon has not picked up the new mode yet; it restarts at phase 0
+    speed = device.get("speed")
+    if type(speed) is not int or not 10 <= speed <= 100:
+        speed = config["speed"]
+    origin = {"started": number("started", now), "phase0": number("phase0", 0.0), "speed": speed}
+    return animation_phase(origin, now)
+
+
+def render_frame(config, theme_color=None, raw=False, elapsed=0, phase=None):
     mode = config["mode"]
     if mode == "hardware" or (mode == "theme" and theme_color is None):
         return None
@@ -228,7 +266,7 @@ def render_frame(config, theme_color=None, raw=False, elapsed=0):
                 data[offset:offset + 3] = bytes.fromhex(row_color)
     elif mode in ANIMATED_MODES:
         data = bytearray(371)
-        t = elapsed * (0.2 + config["speed"] * 0.016)
+        t = phase if phase is not None else elapsed * speed_factor(config["speed"])
         base, accent = rgb(config["color"]), rgb(config["accent"])
         for row, offsets in enumerate(ROW_OFFSETS):
             for column, offset in enumerate(offsets):
@@ -472,18 +510,21 @@ def run_daemon(raw=False):
     dial = None
     next_dial_attempt = 0
     dial_error = None
-    animation_started = time.monotonic()
+    animation = restart_animation(time.monotonic(), DEFAULT_CONFIG["speed"])
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
         while not STOP:
             try:
                 config = read_config()
+                now = time.monotonic()
                 if config["mode"] != active_mode:
                     active_mode = config["mode"]
-                    animation_started = time.monotonic()
+                    animation = restart_animation(now, config["speed"])
+                elif config["speed"] != animation["speed"]:
+                    animation = retime_animation(animation, now, config["speed"])
                 color = read_color() if config["mode"] == "theme" else None
-                target = render_frame(config, color, raw, time.monotonic() - animation_started)
+                target = render_frame(config, color, raw, phase=animation_phase(animation, now))
                 if config["mode"] == "hardware":
                     if dial:
                         dial.close()
@@ -530,7 +571,7 @@ def run_daemon(raw=False):
                 last_error = None
                 status = {"connected": keyboard is not None if config["mode"] != "hardware" else next(candidates(), None) is not None,
                           "applied": applied is not None, "mode": config["mode"], "settings": config,
-                          "started": animation_started, "dial": dial is not None, "error": ""}
+                          **animation, "dial": dial is not None, "error": ""}
             except (OSError, ValueError, UnicodeError) as error:
                 message = str(error)
                 if message != last_error:
@@ -589,7 +630,7 @@ def main():
         config = read_config()
         device = read_json(STATUS_PATH, {"connected": False, "error": "Waiting for keyboard"})
         theme = read_color() if config["mode"] == "theme" else None
-        frame = render_frame(config, theme, args.raw, max(0, time.monotonic() - device.get("started", time.monotonic())))
+        frame = render_frame(config, theme, args.raw, phase=status_phase(device, config, time.monotonic()))
         preview = [["#" + frame[offset:offset + 3].hex() for offset in offsets] for offsets in ROW_OFFSETS] if frame else []
         print(json.dumps({"config": config, "device": device, "catalog": CATALOG, "preview": preview}))
     elif args.action == "daemon":

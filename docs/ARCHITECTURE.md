@@ -33,8 +33,8 @@ Panel.qml ──"omacorsair.py status"──▶ config + status.json + preview +
 1. **Panel to config.** A click or IPC call runs `omacorsair.py set '<json>'`. It merges the update into the current config, validates it (`validate_config`), and writes it atomically (`atomic_json`: temp file in the same directory, then `os.replace`). Concurrent updates in the panel are merged in `pendingUpdate` and sent after the running one finishes.
 2. **Config to daemon.** There is no signal or socket. The daemon calls `read_config()` on every loop iteration and renders a 371-byte frame with `render_frame()`. In `theme` mode it also reads `~/.local/state/omarchy/current/theme/keyboard.rgb` (`read_color`, at most 64 bytes, one `RRGGBB` value).
 3. **Daemon to device.** If the frame differs from the last applied one, `Keyboard.apply()` sends it (see `PROTOCOL.md`). Animated looks produce a new frame each iteration.
-4. **Daemon to panel.** The daemon writes `status.json` only when the status dict changes. Animation frames do not change it (`started` is fixed per mode), so there is no per-frame disk write or log line.
-5. **Panel reads state.** `omacorsair.py status` prints one JSON object: `config`, `device` (the contents of `status.json`), `catalog` (`CATALOG`) and `preview` (rows of `#rrggbb`, rendered in the status process from the same `render_frame()` with elapsed time since `started`).
+4. **Daemon to panel.** The daemon writes `status.json` only when the status dict changes. Animation frames do not change it: the animation clock is stored as an origin (`started`, `phase0`, `speed`) that changes only when the mode or the speed changes, so there is no per-frame disk write or log line.
+5. **Panel reads state.** `omacorsair.py status` prints one JSON object: `config`, `device` (the contents of `status.json`), `catalog` (`CATALOG`) and `preview` (rows of `#rrggbb`, rendered in the status process from the same `render_frame()` at the daemon's current animation phase, see below).
 6. **Layouts.** `Panel.qml` runs `bin/layouts.py status|set|toggle`, which calls `hyprctl devices -j` and `hyprctl switchxkblayout`. It shares no state with the lighting daemon.
 
 `CATALOG` in `omacorsair.py` is the single source of looks: the daemon (`MODES`, `ANIMATED_MODES`), the CLI validation, and the popup gallery (via `status`) all derive from it. Only the quick-color list is defined in `Panel.qml` (`colors`).
@@ -63,9 +63,18 @@ Panel.qml ──"omacorsair.py status"──▶ config + status.json + preview +
 | `/etc/udev/rules.d/70-omacorsair.rules` | Installed by `install-device-access.sh`. |
 | `/sys/class/hidraw/hidraw*` | Device discovery (`candidates()`), then `/dev/hidrawN`. |
 
-`status.json` keys: on success `connected`, `applied`, `mode`, `settings`, `started`, `dial`, `error` (empty string). On a loop error only `connected: false`, `applied: false`, `error`.
+`status.json` keys: on success `connected`, `applied`, `mode`, `settings`, `started`, `phase0`, `speed`, `dial`, `error` (empty string). On a loop error only `connected: false`, `applied: false`, `error`.
 
 Config limits: file read capped at 4097 characters; unknown keys are rejected; `color`/`accent` are six hex digits (an optional `#` is stripped); `brightness` is an int 0..100; `vivid` is a bool; `speed` is an int 10..100.
+
+## Animation clock
+
+Animated looks are functions of a phase `t`. The phase advances at `speed_factor(speed) = 0.2 + speed * 0.016` per second and is kept as an origin `(started, phase0, speed)`, so `t = phase0 + (now - started) * speed_factor(speed)` (`animation_phase()`).
+
+- A mode change restarts the clock: `started = now`, `phase0 = 0`.
+- A speed change rebases it (`retime_animation()`): `phase0` becomes the phase reached so far, `started = now`, and the new speed applies from there. The animation continues where it was instead of jumping.
+- The origin is part of `status.json` and is rewritten only when it changes. The `status` command reads it and computes the same phase with `status_phase()` (using the speed the daemon runs at, not the possibly newer configured one), so the panel preview matches the keyboard. `monotonic()` is system-wide on Linux, so both processes share the time base.
+- Status files from older versions have only `started`; they are read as `phase0 = 0` at the configured speed. If the configured mode differs from the one in the status file (the daemon has not picked up the change yet), the preview uses phase 0, which is where the daemon will restart.
 
 ## Polling and timing
 
