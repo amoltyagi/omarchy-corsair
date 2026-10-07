@@ -11,8 +11,8 @@
   </defs>
   <image x="0" y="0" width="1784" height="1040" xlink:href="screenshots/desktop-hero.jpg"/>
   <rect x="0" y="40" width="1784" height="1000" fill="url(#shade)"/>
-  <rect x="1160" y="62" width="616" height="941" rx="12" fill="#000" fill-opacity="0.6" filter="url(#lift)"/>
-  <image x="1160" y="46" width="616" height="941" xlink:href="screenshots/panel-hero.png"/>
+  <rect x="1160" y="62" width="616" height="942" rx="12" fill="#000" fill-opacity="0.6" filter="url(#lift)"/>
+  <image x="1160" y="46" width="616" height="942" xlink:href="screenshots/panel-hero.png"/>
   <g font-family="Liberation Sans, Arial, sans-serif">
     <text x="96" y="230" fill="#ffffff" font-size="96" font-weight="700">Your keyboard.</text>
     <text x="96" y="334" fill="#ff5fae" font-size="96" font-weight="700">Your theme.</text>

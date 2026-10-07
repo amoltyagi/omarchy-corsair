@@ -11,7 +11,7 @@ wears one of 28 lighting looks, from one popup in the bar. Supports the wired
 
 **[Install](#installation)** · [Bar menu](#bar-menu) · [Lighting gallery](#lighting-gallery) · [Compatibility](#compatibility) · [Changelog](CHANGELOG.md)
 
-<a href="preview.png"><img src="preview.png" alt="The Omacorsair popup open on an Omarchy desktop: the Synthwave look in the gallery, with a miniature keyboard preview, quick colors, brightness, and English and German layout buttons." width="1000"></a>
+<a href="preview.png"><img src="preview.png" alt="The Omacorsair popup open on an Omarchy desktop: the Synthwave look in the gallery, with a miniature keyboard preview, quick colors, brightness, and keyboard layout buttons (EN, DE)." width="1000"></a>
 
 - **28 looks, 9 animations.** Scroll over the bar button or preview to flip through them.
 - **Theme sync.** Follows your Omarchy theme's `keyboard.rgb` automatically.

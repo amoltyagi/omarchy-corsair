@@ -1,8 +1,8 @@
 # Screenshots
 
-Real captures of the Omacorsair popup, taken October 7, 2026 on the LG ultrawide
-(DP-2): 3840x1600, 160% scaling, Omarchy 4.0.4, theme "Last Horizon", on an
-empty workspace. Nothing was generated or edited. Controls and values are as
+Real captures of the Omacorsair 1.3.0 popup, taken October 7, 2026 on the LG ultrawide
+(DP-2): 3840x1600, 160% scaling, Omarchy 4.0.4, on an empty workspace (wallpaper
+and bar only). Nothing was generated or edited. Controls and values are as
 the plugin rendered them.
 
 Process: switch the focused monitor to an empty workspace, set the look with
@@ -14,7 +14,7 @@ were restored afterwards.
 
 | Panel (native size, transparent rounded corners) | Backdrop | Look | State |
 | --- | --- | --- | --- |
-| `panel-hero.png` (616x941) | `desktop-hero.jpg` | Synthwave | default view |
+| `panel-hero.png` (616x942) | `desktop-hero.jpg` | Synthwave | default view |
 | `panel-motion.png` (616x1097) | `desktop-motion.jpg` | Aurora | speed controls visible |
 | `panel-gallery.png` (616x1546) | `desktop-gallery.jpg` | Aurora | Browse all 28 looks expanded |
 
