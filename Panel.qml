@@ -128,11 +128,63 @@ Ui.Panel {
         submit({mode: currentLook.custom ? currentLook.id : "solid", color: base, accent: accent})
     }
 
+    // A bar surface exists per monitor, so this Panel is instantiated once per
+    // screen, but an IPC target accepts only one handler. Only the instance on
+    // the first screen registers; it then routes open/close/toggle to the
+    // instance on the focused monitor (the same rule the shell uses for
+    // `omarchy-shell shell toggle <id>`). If that screen goes away, the binding
+    // re-evaluates and the instance on the new first screen takes over.
+    readonly property string screenName: QsWindow.window && QsWindow.window.screen ? String(QsWindow.window.screen.name || "") : ""
+    readonly property bool ipcOwner: screenName !== "" && Quickshell.screens.length > 0 && String(Quickshell.screens[0].name || "") === screenName
+
+    function livePanels() {
+        var items = root.bar && typeof root.bar.moduleWidgets === "function" ? root.bar.moduleWidgets(root.moduleName) : []
+        var panels = items.filter(item => item && typeof item.open === "function" && typeof item.close === "function")
+        return panels.length ? panels : [root]
+    }
+
+    function focusedPanel(panels) {
+        var monitor = Hyprland.focusedMonitor
+        var name = monitor ? String(monitor.name || "") : ""
+        if (name !== "") {
+            for (var i = 0; i < panels.length; i++) {
+                if (panels[i].screenName === name) return panels[i]
+            }
+        }
+        return root
+    }
+
+    function openOnFocused() {
+        var panels = livePanels()
+        var target = focusedPanel(panels)
+        panels.forEach(panel => { if (panel !== target && panel.opened) panel.close() })
+        target.open()
+    }
+
+    function closeAll() {
+        livePanels().forEach(panel => panel.close())
+    }
+
+    function toggleOnFocused() {
+        var panels = livePanels()
+        var openPanels = panels.filter(panel => panel.opened)
+        if (openPanels.length) openPanels.forEach(panel => panel.close())
+        else focusedPanel(panels).open()
+    }
+
+    // Other monitors' copies hold their own config/device snapshot; refresh
+    // them after a change so IPC next/previous (served by one copy) never
+    // starts from a stale look.
+    function refreshPeers() {
+        livePanels().forEach(panel => { if (panel !== root) panel.refresh() })
+    }
+
     IpcHandler {
+        enabled: root.ipcOwner
         target: root.ipcTarget
-        function open(): void { root.open() }
-        function close(): void { root.close() }
-        function toggle(): void { root.toggle() }
+        function open(): void { root.openOnFocused() }
+        function close(): void { root.closeAll() }
+        function toggle(): void { root.toggleOnFocused() }
         function setColor(color: string): void { root.submit({mode: "solid", color: color}) }
         function setMode(mode: string): void { root.submit({mode: mode}) }
         function next(): void { root.cycle(1) }
@@ -204,7 +256,10 @@ Ui.Panel {
                 var update = root.pendingUpdate
                 root.pendingUpdate = null
                 Qt.callLater(() => root.submit(update))
-            } else Qt.callLater(root.refresh)
+            } else {
+                Qt.callLater(root.refresh)
+                Qt.callLater(root.refreshPeers)
+            }
         }
     }
 
