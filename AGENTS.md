@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Omacorsair: Omarchy 4 shell plugin (Quickshell/QML + stdlib-only Python) for the wired Corsair K65 Plus (`1b1c:2b11`): per-key lighting, volume dial in software mode, EN/DE layout switching.
+Omacorsair: Omarchy 4 shell plugin (Quickshell/QML + stdlib-only Python) for the wired Corsair K65 Plus (`1b1c:2b11`): per-key lighting, volume dial in software mode, keyboard layout switching (e.g. EN/DE).
 
 ## Scope (deliberate)
 
@@ -14,7 +14,7 @@ Niche by design: Omarchy users with a **wired Corsair K65 Plus (`1b1c:2b11`)**. 
 | `Service.qml` | Runs and restarts the daemon (5 s retry). |
 | `Panel.qml` | Bar button, popup, quick colors, IPC handlers. |
 | `bin/omacorsair.py` | Backend: `CATALOG`, rendering, HID protocol, `Dial`, daemon, CLI. |
-| `bin/layouts.py` | EN/DE switching via `hyprctl`. |
+| `bin/layouts.py` | Layout switching (any `kb_layout`) via `hyprctl`. |
 | `70-omacorsair.rules` | udev `uaccess` for interfaces 01 and 02. |
 | `install.sh`, `install-device-access.sh` | Dev install; udev rule install. |
 | `tests/test_backend.py`, `tests/test_layouts.py` | Hardware-free unit tests. |

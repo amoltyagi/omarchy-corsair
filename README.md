@@ -38,7 +38,8 @@ re-run `bash ~/.config/omarchy/plugins/case.omacorsair/install-device-access.sh`
 once after updating. Without it the volume dial stops working while software
 lighting is active.
 
-Configure English/German layouts as shown below if you want language switching.
+Configure the keyboard layouts you want to switch between (see
+[Keyboard layouts](#keyboard-layouts)) if you want layout switching in the menu.
 Optionally place the button before your audio widget:
 
 ```sh
@@ -71,25 +72,42 @@ Dependencies: Omarchy 4 / Quickshell and Python 3 (standard library only).
 Click the **keyboard icon** on the right side of the bar, just before audio.
 Right-click the icon to return immediately to **Theme sync**.
 
-### English / German keyboard layouts
+### Keyboard layouts
 
-The bar button shows the active **EN** or **DE** layout. At the top of its menu,
-choose **EN · English** (US English) or **DE · Deutsch** (German/QWERTZ).
-**Middle-click the bar button** to toggle. Add the optional **Ctrl+Alt+Space**
-shortcut below if you also want a keyboard shortcut.
-The switch is applied to all detected typing keyboards using their own layout
-indices; power buttons and media-control devices are excluded.
+The menu switches between the layouts configured in Hyprland, in `kb_layout`
+order. The example below uses English and German, but any layouts work.
 
-The available layouts are configured persistently in `~/.config/hypr/input.lua`:
+- The bar button shows the active layout as a short code: **EN** for `us`, **DE**
+  for `de`, **UK** for `gb`, and the upper-cased code for anything else (`fr` is
+  **FR**).
+- At the top of the menu there is one button per configured layout, named with
+  Hyprland's own keymap name for the active layout (for example **English (US)**)
+  and a built-in name for the others. With a single layout the row is hidden and
+  the menu explains how to add more.
+- **Middle-click the bar button** to move to the next layout; with three or more
+  layouts it cycles in `kb_layout` order and wraps around.
+- The switch is applied to all detected typing keyboards using their own layout
+  indices; power buttons and media-control devices are excluded.
+- Layouts are read from the Corsair keyboard when Hyprland lists it, otherwise
+  from your main keyboard.
+
+Layouts are configured persistently in `~/.config/hypr/input.lua`, for example
+English and German:
 
 ```lua
 hl.config({ input = { kb_layout = "us,de", kb_variant = "" } })
 ```
 
+A third layout is just another entry (`kb_layout = "us,de,fr"`). `kb_variant` is
+positional like `kb_layout` (`kb_layout = "us,de"` with `kb_variant = ",nodeadkeys"`
+gives German without dead keys). If the same layout appears twice with different
+variants, such as `us,us` with `,intl`, the entries are told apart as `us` and
+`us(intl)`.
+
 The optional shortcut in `~/.config/hypr/bindings.lua` is:
 
 ```lua
-o.bind("CTRL + ALT + SPACE", "Switch English / German keyboard layout", "omarchy-shell case.omacorsair toggleLanguage")
+o.bind("CTRL + ALT + SPACE", "Switch keyboard layout", "omarchy-shell case.omacorsair toggleLanguage")
 ```
 
 After changing Hyprland configuration, run `hyprctl reload` and
@@ -98,9 +116,9 @@ This layout switching is inspired by
 [Keyboard Layout Switcher](https://github.com/jesusarchive/omarchy-keyboard-layout-switcher).
 
 ```sh
-omarchy-shell case.omacorsair setLanguage de
+omarchy-shell case.omacorsair setLanguage de      # any configured layout code
 omarchy-shell case.omacorsair setLanguage us
-omarchy-shell case.omacorsair toggleLanguage
+omarchy-shell case.omacorsair toggleLanguage      # next layout
 ```
 
 ### Lighting gallery
@@ -257,7 +275,7 @@ rm -f ~/.config/omarchy/omacorsair.json
 rm -rf ~/.local/state/omarchy/omacorsair
 ```
 
-Your `us,de` Hyprland configuration remains available to other layout switchers.
+Your Hyprland keyboard layout configuration (for example `us,de`) remains available to other layout switchers.
 
 ## Developer docs
 

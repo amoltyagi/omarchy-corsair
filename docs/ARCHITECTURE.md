@@ -10,7 +10,7 @@ Omacorsair is an Omarchy 4 shell plugin (Quickshell/QML) plus two stdlib-only Py
 | `Service.qml` | Background service. Starts and supervises the lighting daemon. |
 | `Panel.qml` | Bar button and popup. Never talks to the keyboard; it only runs helper commands. |
 | `bin/omacorsair.py` | Lighting backend, volume-dial listener, config/status handling, CLI. |
-| `bin/layouts.py` | EN/DE layout status and switching through `hyprctl`. Independent of the keyboard hardware. |
+| `bin/layouts.py` | Keyboard layout status and switching (every layout in Hyprland's `kb_layout`) through `hyprctl`. Independent of the keyboard hardware. |
 | `70-omacorsair.rules` | udev rule: `uaccess` on hidraw interfaces 01 and 02 of `1b1c:2b11`. |
 | `install.sh`, `install-device-access.sh` | Dev install (symlink + enable) and udev rule install. |
 
@@ -35,7 +35,7 @@ Panel.qml ──"omacorsair.py status"──▶ config + status.json + preview +
 3. **Daemon to device.** If the frame differs from the last applied one, `Keyboard.apply()` sends it (see `PROTOCOL.md`). Animated looks produce a new frame each iteration.
 4. **Daemon to panel.** The daemon writes `status.json` only when the status dict changes. Animation frames do not change it: the animation clock is stored as an origin (`started`, `phase0`, `speed`) that changes only when the mode or the speed changes, so there is no per-frame disk write or log line.
 5. **Panel reads state.** `omacorsair.py status` prints one JSON object: `config`, `device` (the contents of `status.json`), `catalog` (`CATALOG`) and `preview` (rows of `#rrggbb`, rendered in the status process from the same `render_frame()` at the daemon's current animation phase, see below).
-6. **Layouts.** `Panel.qml` runs `bin/layouts.py status|set|toggle`, which calls `hyprctl devices -j` and `hyprctl switchxkblayout`. It shares no state with the lighting daemon.
+6. **Layouts.** `Panel.qml` runs `bin/layouts.py status|set|toggle`, which calls `hyprctl devices -j` and `hyprctl switchxkblayout`. It shares no state with the lighting daemon. See Layouts below.
 
 `CATALOG` in `omacorsair.py` is the single source of looks: the daemon (`MODES`, `ANIMATED_MODES`), the CLI validation, and the popup gallery (via `status`) all derive from it. Only the quick-color list is defined in `Panel.qml` (`colors`).
 
@@ -81,6 +81,20 @@ Panel.qml ──"omacorsair.py status"──▶ config + status.json + preview +
 On success all keys are present. On a loop error the status has `connected: false`, `applied: false`, `error` and `dial` (always known), plus `mode`, `settings` and the clock keys from the last config that validated. Those three are missing only if the very first config read has not succeeded yet. `Panel.qml` reads `device.connected`, `device.error` and `device.mode` (and falls back to `config.mode`), so an error status shows the message and the look is not lost.
 
 Config limits: file read capped at 4097 characters; unknown keys are rejected; `color`/`accent` are six hex digits (an optional `#` is stripped); `brightness` is an int 0..100; `vivid` is a bool; `speed` is an int 10..100.
+
+## Layouts
+
+`bin/layouts.py` works on the layouts Hyprland reports for the preferred typing keyboard (the Corsair K65 Plus if listed, else the `main` keyboard, else the first one; pseudo keyboards such as power buttons are ignored).
+
+- `configured()` splits `layout` and `variant` (both comma separated, positional) into entries `{index, code, variant, key}` in `kb_layout` order. An identical repeated `code`+`variant` is one entry. `key` is the code, or `code(variant)` when the same code is configured with different variants.
+- `status` prints `active` (key), `label` and `name` of the active layout, `available` (all keys in order), `layouts` (`[{code, label, name}]` for the panel buttons), `keyboard` and `count`.
+  - `label`: `us` EN, `de` DE, `gb` UK, otherwise the upper-cased code; a variant disambiguated entry adds `-VARIANT` (`EN-INTL`).
+  - `name`: Hyprland's `active_keymap` for the active layout (it names only that one), otherwise the built-in `NAMES` map, otherwise the code. A variant is appended to built-in names.
+  - The active entry comes from `active_layout_index`; without it (older Hyprland) the keymap name is matched against the configured entries.
+- `toggle` switches to the next entry after the active one, wrapping. With fewer than two layouts it fails with a hint instead of doing nothing silently.
+- `set <code>` accepts any configured key or bare code (case-insensitive); anything else fails with the list of configured layouts.
+- Switching is applied to every typing keyboard. Each keyboard has its own layout order, so the target is matched per keyboard by code and variant, then `switchxkblayout <name> <index>` is called. The result is re-read and checked.
+- `Panel.qml` builds the layout buttons from `layouts`, hides the row when fewer than two are configured (showing how to add more instead) and ignores middle-click in that case. The IPC names `toggleLanguage` and `setLanguage` are unchanged.
 
 ## Animation clock
 
