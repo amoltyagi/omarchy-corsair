@@ -169,6 +169,20 @@ def read_config():
     return validate_config(read_json(CONFIG_PATH, DEFAULT_CONFIG))
 
 
+def apply_update(current, update):
+    """Merge a settings update. An optional integer `step` moves through CATALOG
+    relative to the update's `mode` (or the saved mode), so rapid next/previous
+    requests stay correct even if the caller's view of the current look is stale."""
+    update = dict(update)
+    step = update.pop("step", None)
+    config = validate_config(dict(current, **update))
+    if step is not None:
+        if type(step) is not int:
+            raise ValueError("step must be an integer")
+        config["mode"] = MODES[(MODES.index(config["mode"]) + step) % len(MODES)]
+    return config
+
+
 def rgb(hexcolor):
     return tuple(channel / 255 for channel in bytes.fromhex(hexcolor))
 
@@ -664,7 +678,7 @@ def main():
         update = json.loads(args.value)
         if not isinstance(update, dict):
             raise ValueError("settings must be an object")
-        config = validate_config(dict(read_config(), **update))
+        config = apply_update(read_config(), update)
         atomic_json(CONFIG_PATH, config)
         print(json.dumps({"config": config}))
     elif args.action == "status":

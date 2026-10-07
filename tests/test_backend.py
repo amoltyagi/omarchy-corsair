@@ -310,6 +310,22 @@ class ProtocolTests(unittest.TestCase):
                          [backend.render_frame(configs[0]), backend.render_frame(configs[1])])
         keyboard.close.assert_called_once()
 
+    def test_relative_step_resolves_against_saved_mode(self):
+        modes = backend.MODES
+        saved = backend.validate_config({"mode": "ocean"})
+        index = modes.index("ocean")
+        self.assertEqual(backend.apply_update(saved, {"step": 1})["mode"], modes[index + 1])
+        self.assertEqual(backend.apply_update(saved, {"step": 11})["mode"], modes[(index + 11) % len(modes)])
+        self.assertEqual(backend.apply_update(saved, {"step": -len(modes) - 1})["mode"], modes[index - 1])
+        # A coalesced absolute mode is the base for the steps that followed it.
+        self.assertEqual(backend.apply_update(saved, {"mode": "theme", "step": 2})["mode"], modes[2])
+        self.assertEqual(backend.apply_update(saved, {"step": 1, "brightness": 40})["brightness"], 40)
+        for bad in ("1", 1.5, True):
+            with self.assertRaises(ValueError):
+                backend.apply_update(saved, {"step": bad})
+        with self.assertRaises(ValueError):
+            backend.apply_update(saved, {"mode": "nope", "step": 1})
+
     def test_dial_reports_map_to_volume_actions(self):
         turn = lambda value: bytes([0, 0x05, 0, 0, value]) + bytes(59)
         press = lambda down: bytes([0, 0x02]) + bytes(17) + bytes([0x02 if down else 0]) + bytes(44)

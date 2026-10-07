@@ -44,8 +44,16 @@ Ui.Panel {
         {name: "Ice", hex: "99ddff"}, {name: "White", hex: "ffffff"}
     ]
 
+    property bool refreshQueued: false
+
     function refresh() {
-        if (!statusProc.running && !actionProc.running) statusProc.running = true
+        if (actionProc.running) return  // its completion refreshes
+        if (statusProc.running) {
+            refreshQueued = true  // a change landed mid-query; query again afterwards
+            return
+        }
+        refreshQueued = false
+        statusProc.running = true
     }
 
     function refreshLanguage() {
@@ -91,9 +99,17 @@ Ui.Panel {
     }
 
     function submit(update) {
-        if (update.mode) requestedMode = update.mode
+        // Show the expected look immediately; the helper's reply is authoritative.
+        if (update.step) requestedMode = modes[((modeIndex + update.step) % modes.length + modes.length) % modes.length].id
+        else if (update.mode) requestedMode = update.mode
         if (actionProc.running) {
-            pendingUpdate = Object.assign({}, pendingUpdate || {}, update)
+            // Coalesce while a save runs: steps add up, an absolute mode resets them.
+            var merged = Object.assign({}, pendingUpdate || {})
+            var step = (update.mode ? 0 : (merged.step || 0)) + (update.step || 0)
+            Object.assign(merged, update)
+            if (step) merged.step = step
+            else delete merged.step
+            pendingUpdate = merged
             return
         }
         actionError = ""
@@ -111,8 +127,9 @@ Ui.Panel {
 
     function cycle(delta) {
         if (!modes.length) return
-        var index = (modeIndex + delta + modes.length) % modes.length
-        submit({mode: modes[index].id})
+        // Relative, resolved by the helper against the saved mode, so a stale
+        // cached selection can never make rapid next/previous skip or repeat.
+        submit({step: delta})
     }
 
     function surprise() {
@@ -172,13 +189,6 @@ Ui.Panel {
         var openPanels = panels.filter(panel => panel.opened)
         if (openPanels.length) openPanels.forEach(panel => panel.close())
         else focusedPanel(panels).open()
-    }
-
-    // Other monitors' copies hold their own config/device snapshot; refresh
-    // them after a change so IPC next/previous (served by one copy) never
-    // starts from a stale look.
-    function refreshPeers() {
-        livePanels().forEach(panel => { if (panel !== root) panel.refresh() })
     }
 
     IpcHandler {
@@ -244,10 +254,27 @@ Ui.Panel {
         id: statusProc
         command: ["/usr/bin/python3", "-I", root.helperPath, "status"]
         stdout: StdioCollector { onStreamFinished: root.ingest(text) }
+        onExited: (code, status) => { if (root.refreshQueued) Qt.callLater(root.refresh) }
+    }
+    // Every bar copy (one per monitor) and any CLI/IPC/script change writes this
+    // file. Watching it keeps each copy's cached look current, so relative
+    // actions such as IPC next/previous never step from a stale selection.
+    FileView {
+        path: Quickshell.env("HOME") + "/.config/omarchy/omacorsair.json"
+        watchChanges: true
+        printErrors: false
+        onFileChanged: root.refresh()
     }
     Process {
         id: actionProc
-        stdout: StdioCollector { onStreamFinished: if (text.trim() !== "") root.ingest(text) }
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (text.trim() === "") return
+                root.ingest(text)
+                // The latest save's reply is the truth; drop any optimistic guess.
+                if (root.pendingUpdate === null) root.requestedMode = ""
+            }
+        }
         stderr: StdioCollector { onStreamFinished: if (text.trim() !== "") root.actionError = text.trim().slice(0, 300) }
         onExited: (code, status) => {
             if (code !== 0) {
@@ -258,10 +285,7 @@ Ui.Panel {
                 var update = root.pendingUpdate
                 root.pendingUpdate = null
                 Qt.callLater(() => root.submit(update))
-            } else {
-                Qt.callLater(root.refresh)
-                Qt.callLater(root.refreshPeers)
-            }
+            } else Qt.callLater(root.refresh)
         }
     }
 

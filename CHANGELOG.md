@@ -9,6 +9,7 @@
 - Fix: a single transient timeout or bad reply no longer drops the connection and flips the keyboard to its built-in lighting for a moment. The helper retries with the device open, repaints the whole frame, and reconnects only when the keyboard is gone or after three failures in a row.
 - The status file keeps the active look, settings and dial state while an error is shown.
 - Fix: the shell log no longer repeats "IpcHandler … another handler is registered for target case.omacorsair" on multi-monitor setups. One bar copy handles IPC; `open` and `toggle` act on the focused monitor's bar.
+- Fix: rapid next/previous (wheel, arrow keys, IPC) could skip or repeat looks when the settings had changed outside that bar copy. Steps are now resolved by the helper against the saved look, and every bar copy follows changes to the settings file.
 - `install.sh` backs up `shell.json` only when it changed since the last backup.
 - Developer docs: `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, `docs/EXTENDING.md`.
 
