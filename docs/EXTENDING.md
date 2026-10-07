@@ -30,9 +30,9 @@ Quick colors are the dots under "QUICK COLORS" in the popup. They set `{mode: "s
 3. Use lowercase six-digit hex without `#`; the config stores it that way and the selection highlight compares against `config.color`.
 4. Update the "ten quick presets" text in `README.md`.
 
-## Adding another Corsair model (not yet supported)
+## Adding another Corsair model (out of scope)
 
-Not yet supported. The backend is hard-wired to the wired K65 Plus. A new model would need at least:
+Out of scope by design (see `AGENTS.md`); kept here as reference only. The backend is hard-wired to the wired K65 Plus. A new model would need at least:
 
 - **Device ID:** `DEVICE_ID` (`HID_ID=0003:00001B1C:0000XXXX`), the checks in `Keyboard.__init__` and `Dial.__init__` (`(3, 0x1B1C, 0x2B11)`), and the `idProduct` in `70-omacorsair.rules`.
 - **Interface numbers:** the lighting interface (default `"01"` in `candidates()`) and the dial/event interface (`DIAL_INTERFACE`), plus the udev `ID_USB_INTERFACE_NUM` match.

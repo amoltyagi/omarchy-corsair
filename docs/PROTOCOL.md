@@ -64,7 +64,7 @@ Brightness is applied in software to every byte of the frame before sending; the
 Per-key colors are written at byte offsets in the 371-byte buffer; each key uses 3 bytes (R, G, B) starting there.
 
 - `ROW_OFFSETS`: six tuples, one per physical keyboard row, top (function row) to bottom (space row), with 14, 15, 15, 14, 13 and 11 keys. Used by palettes (one color per row), animations (x = column/(n-1), y = row/5, seed = offset//3) and the preview.
-- `GAMING_OFFSETS`: `(78, 12, 66, 21, 246, 240, 243, 237)`, the W/A/S/D and arrow keys that get the accent color in `gaming` mode. TODO(verify): per-key naming was not checked against hardware.
+- `GAMING_OFFSETS`: `(78, 12, 66, 21, 246, 240, 243, 237)`, the W, A, S, D, ↑, ←, ↓, → keys (in that order) that get the accent color in `gaming` mode. Verified against `packetIndex` in OpenLinkHub `k65plus.json` at the reference commit.
 - Source: OpenLinkHub `database/keyboard/k65plus.json`, US layout (the comment in the code says letter and arrow offsets are shared between layouts).
 - Offsets are multiples of 3. The maximum used is 366 (bytes 366..368). Not every slot of the 123 is mapped to a key; unmapped slots receive the background color in static modes and stay at zero in animated modes.
 
@@ -87,7 +87,7 @@ Reports must be longer than index 4 (turns) or index 19 (press). Reads are 64 by
 - Each `raise`/`lower` adds `DIAL_STEP` (5) to `pending`.
 - A volume command runs only when no previous one is still running (`child.poll()`); the pending sum is then sent as a single `+N`/`-N` argument. Fast turns merge; opposite turns cancel.
 - Command: `omarchy-audio-output-volume <arg>` (`PATH`, then `/usr/share/omarchy/bin`). Fallback: `wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ N%+/-`, and `wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle` for mute.
-- TODO(verify): that `omarchy-audio-output-volume` accepts the signed arguments `+5`/`-5` and `mute-toggle`; the code passes them as is.
+- `omarchy-audio-output-volume` officially accepts `raise|lower|mute-toggle|+N|-N` (see its `omarchy:args` header) and shows the Omarchy OSD.
 - Commands run with `start_new_session=True` and all stdio on `/dev/null`.
 
 ## Credit

@@ -2,6 +2,10 @@
 
 Omacorsair: Omarchy 4 shell plugin (Quickshell/QML + stdlib-only Python) for the wired Corsair K65 Plus (`1b1c:2b11`): per-key lighting, volume dial in software mode, EN/DE layout switching.
 
+## Scope (deliberate)
+
+Niche by design: Omarchy users with a **wired Corsair K65 Plus (`1b1c:2b11`)**. Do not add other Corsair models, wireless/dongle support, or non-Omarchy targets unless the maintainer explicitly asks. Prefer polish, reliability and UX for this one keyboard.
+
 ## Repo map
 
 | Path | What |
