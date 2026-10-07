@@ -3,12 +3,40 @@
 [![Tests](https://github.com/amoltyagi/omarchy-corsair/actions/workflows/test.yml/badge.svg)](https://github.com/amoltyagi/omarchy-corsair/actions/workflows/test.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-Your wired Corsair K65 Plus, wearing your Omarchy theme—or one of 28 lighting looks.
+## Your keyboard. Your theme.
+
+Your wired Corsair K65 Plus follows your [Omarchy](https://omarchy.org) theme, or
+wears one of 28 lighting looks, from one popup in the bar. Supports the wired
+**Corsair K65 Plus Wireless, USB ID `1b1c:2b11`**, and nothing else.
+
+**[Install](#installation)** · [Bar menu](#bar-menu) · [Lighting gallery](#lighting-gallery) · [Compatibility](#compatibility) · [Changelog](CHANGELOG.md)
+
+<a href="preview.png"><img src="preview.png" alt="The Omacorsair popup open on an Omarchy desktop: the Synthwave look in the gallery, with a miniature keyboard preview, quick colors, brightness, and English and German layout buttons." width="1000"></a>
+
+- **28 looks, 9 animations.** Scroll over the bar button or preview to flip through them.
+- **Theme sync.** Follows your Omarchy theme's `keyboard.rgb` automatically.
+- **Your colors.** Any hex color, with speed and brightness controls.
+- **Preview first.** The miniature keyboard shows the look's real per-key colors.
+- **EN / DE in one click.** Switch layouts from the same popup.
+- **The volume dial keeps working.** Software lighting doesn't take it over.
+- **Safe by design.** Volatile lighting only; it never writes flash, profiles or firmware.
 
 An Omarchy shell plugin inspired by [Omakeychron](https://github.com/paulsp94/omakeychron).
-Includes a keyboard bar button for manual colors, combinations and brightness,
-plus automatic theme sync using the active theme's `keyboard.rgb`.
-Supports the wired **Corsair K65 Plus Wireless, USB ID `1b1c:2b11`**.
+
+## Make it move.
+
+Nine animations, including Aurora, Matrix rain and Hearth fire. Four of them,
+Comet, Breathing room, Silk waves and Fireflies, use your own colors. Set the speed
+with the slider or the Dreamy / Flow / Energetic presets.
+
+<a href="preview-motion.png"><img src="preview-motion.png" alt="The Omacorsair popup showing the Aurora animation, with a motion speed slider and Dreamy, Flow and Energetic presets." width="1000"></a>
+
+## 28 looks, one click away.
+
+**Browse all 28 looks** opens every palette, animation and custom look in one
+filterable list.
+
+<a href="preview-gallery.png"><img src="preview-gallery.png" alt="The Omacorsair popup with Browse all 28 looks expanded: category tabs All, Palettes, Motion and Custom, and a list of every look." width="1000"></a>
 
 ## Compatibility
 

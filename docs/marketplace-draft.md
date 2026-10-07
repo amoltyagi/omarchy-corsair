@@ -1,6 +1,6 @@
 # Omacorsair marketplace listing draft
 
-Status: text complete. Screenshots and demo are NOT captured yet (see "Screenshot shot-list").
+Status: text and screenshots complete. No demo GIF or WebM (no screen recorder installed).
 
 ## Submission form fields
 (Template: omacom/omarchy-plugin-marketplace, `submit-plugin.yml`)
@@ -89,15 +89,15 @@ Lighting is sent as volatile software commands. The plugin never writes onboard 
 - Setup: one-time udev device-access step; `us,de` in Hyprland input config for EN/DE switching.
 - Install: `omarchy plugin add https://github.com/amoltyagi/omarchy-corsair --enable`
 
-## Screenshot shot-list
-The marketplace guide says only that a preview is optional and "optimized automatically". It gives no size or format limits. Capture the popup only, never the desktop.
+## Images
+The marketplace guide says the preview is optional and "optimized automatically". It gives no size or format limits. Use `preview.png` as the listing preview. All images are real `grim` captures of the plugin popup over the bar and wallpaper on an empty workspace. See `assets/screenshots/README.md`.
 
 | # | File | View | Caption |
 | --- | --- | --- | --- |
-| 1 | `assets/01-gallery.png` | Default popup with gallery | Scroll over the keyboard preview to flip through 28 looks. |
-| 2 | `assets/02-browse-all.png` | "Browse all looks" expanded | Browse every palette, animation and custom look in one place. |
-| 3 | `assets/03-animated-speed.png` | Animated look (e.g. Aurora) with speed controls | Nine animations, with a speed slider and Dreamy / Flow / Energetic presets. |
-| 4 | `assets/04-custom-colors.png` | Custom colors (e.g. Comet or WASD + arrows) | Set a base and accent color with a hex code or a quick preset. |
-| 5 (optional) | `assets/demo.webm` | Animation in the preview, ≤ 10 s | Live preview of an animated look. |
+| 1 | `preview.png` (1784x1040) | Hero: Synthwave in the gallery | Your keyboard. Your theme. 28 looks, 9 animations, theme sync. |
+| 2 | `preview-motion.png` (1784x1150) | Aurora with the speed controls | Nine animations, with a speed slider and Dreamy / Flow / Energetic presets. |
+| 3 | `preview-gallery.png` (1784x1600) | Browse all 28 looks expanded | Every palette, animation and custom look in one filterable list. |
 
-Do not claim the bar button or desktop appear in these shots unless they actually do.
+Native panel captures (616 px wide, transparent rounded corners) are in `assets/screenshots/`: `panel-hero.png`, `panel-motion.png` and `panel-gallery.png`.
+
+Limits to be aware of: the gallery panel is taller than the screen, so its lower controls are scrolled out of view in that shot. The shots show the bar and wallpaper but no windows or notifications. Do not claim they show the physical keyboard.

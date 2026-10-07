@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1784" height="1040" viewBox="0 0 1784 1040">
+  <!-- Hero: synthwave in the gallery. Real DP-2 capture (3840x1600, scale 1.6); the panel sits at its real position, bullets in the free space. -->
+  <defs>
+    <linearGradient id="shade" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#070a14" stop-opacity="0.9"/>
+      <stop offset="0.42" stop-color="#070a14" stop-opacity="0.84"/>
+      <stop offset="0.64" stop-color="#070a14" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#070a14" stop-opacity="0.2"/>
+    </linearGradient>
+    <filter id="lift" x="-20%" y="-10%" width="140%" height="125%"><feGaussianBlur stdDeviation="22"/></filter>
+  </defs>
+  <image x="0" y="0" width="1784" height="1040" xlink:href="screenshots/desktop-hero.jpg"/>
+  <rect x="0" y="40" width="1784" height="1000" fill="url(#shade)"/>
+  <rect x="1160" y="62" width="616" height="941" rx="12" fill="#000" fill-opacity="0.6" filter="url(#lift)"/>
+  <image x="1160" y="46" width="616" height="941" xlink:href="screenshots/panel-hero.png"/>
+  <g font-family="Liberation Sans, Arial, sans-serif">
+    <text x="96" y="230" fill="#ffffff" font-size="96" font-weight="700">Your keyboard.</text>
+    <text x="96" y="334" fill="#ff5fae" font-size="96" font-weight="700">Your theme.</text>
+    <circle cx="108" cy="416" r="9" fill="#ff5fae"/><text x="142" y="430" font-size="42" font-weight="700" fill="#ffffff">28 looks, 9 animations</text><text x="142" y="476" font-size="31" fill="#d6dde6">scroll to flip through them, with a live key preview</text><circle cx="108" cy="524" r="9" fill="#ff5fae"/><text x="142" y="538" font-size="42" font-weight="700" fill="#ffffff">Theme sync</text><text x="142" y="584" font-size="31" fill="#d6dde6">follows your Omarchy theme automatically</text><circle cx="108" cy="632" r="9" fill="#ff5fae"/><text x="142" y="646" font-size="42" font-weight="700" fill="#ffffff">Your colors</text><text x="142" y="692" font-size="31" fill="#d6dde6">any hex color, plus speed and brightness</text><circle cx="108" cy="740" r="9" fill="#ff5fae"/><text x="142" y="754" font-size="42" font-weight="700" fill="#ffffff">The volume dial keeps working</text><text x="142" y="800" font-size="31" fill="#d6dde6">lighting never gets in its way</text><circle cx="108" cy="848" r="9" fill="#ff5fae"/><text x="142" y="862" font-size="42" font-weight="700" fill="#ffffff">Safe by design</text><text x="142" y="908" font-size="31" fill="#d6dde6">volatile lighting, never writes flash</text>
+    <text x="96" y="1006" fill="#9fb0c0" font-size="28" letter-spacing="5" font-weight="700">OMACORSAIR · OMARCHY</text>
+  </g>
+</svg>

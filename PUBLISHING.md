@@ -36,8 +36,10 @@ Record the commit hash, and check the corresponding GitHub Actions run. Hardware
 smoke tests are optional commands documented in the README and briefly change
 lighting/layout before restoring the original settings.
 
-An optional marketplace preview should show only the plugin popup. Avoid a
-full-desktop screenshot with unrelated windows or personal information.
+The marketplace preview is `preview.png`, a real capture of the plugin popup on an
+empty workspace (hero artwork; `preview-motion.png` and `preview-gallery.png` are
+extras). See `assets/screenshots/README.md` for how they were captured, and avoid
+any full-desktop screenshot with unrelated windows or personal information.
 
 Submit the repository through the official form:
 
