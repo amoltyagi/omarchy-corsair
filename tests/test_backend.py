@@ -175,12 +175,13 @@ class ProtocolTests(unittest.TestCase):
         with patch.object(backend, "STOP", False), patch.object(backend, "read_config", return_value=config), \
                 patch.object(backend, "candidates", side_effect=lambda: iter([Path("/dev/hidraw2")])), \
                 patch.object(backend, "Keyboard", return_value=keyboard), \
+                patch.object(backend, "open_dial", side_effect=OSError("no dial")), \
                 patch.object(backend, "atomic_json") as write_status, patch.object(backend, "log") as log, \
                 patch.object(backend.signal, "signal"), patch.object(backend.time, "monotonic", side_effect=lambda: next(clock)), \
                 patch.object(backend.time, "sleep", side_effect=tick):
             backend.run_daemon()
         self.assertEqual(keyboard.apply.call_count, 3)
-        self.assertEqual(log.call_count, 2)  # connect + selected mode, not every frame
+        self.assertEqual(log.call_count, 3)  # connect + selected mode + dial unavailable, not every frame
         self.assertEqual(write_status.call_count, 1)
         self.assertEqual(sleeps, [0.08] * 3)
         keyboard.close.assert_called_once()
@@ -200,6 +201,7 @@ class ProtocolTests(unittest.TestCase):
                 patch.object(backend, "read_color") as read_theme, \
                 patch.object(backend, "candidates", side_effect=lambda: iter([Path("/dev/hidraw2")])), \
                 patch.object(backend, "Keyboard", return_value=keyboard), \
+                patch.object(backend, "open_dial", side_effect=OSError("no dial")), \
                 patch.object(backend, "atomic_json"), patch.object(backend, "log"), \
                 patch.object(backend.signal, "signal"), patch.object(backend.time, "sleep", side_effect=tick):
             backend.run_daemon()
@@ -207,6 +209,36 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in keyboard.apply.call_args_list],
                          [backend.render_frame(configs[0]), backend.render_frame(configs[1])])
         keyboard.close.assert_called_once()
+
+    def test_dial_reports_map_to_volume_actions(self):
+        turn = lambda value: bytes([0, 0x05, 0, 0, value]) + bytes(59)
+        press = lambda down: bytes([0, 0x02]) + bytes(17) + bytes([0x02 if down else 0]) + bytes(44)
+        self.assertEqual(backend.dial_action(turn(1), False), ("raise", False))
+        self.assertEqual(backend.dial_action(turn(255), False), ("lower", False))
+        self.assertEqual(backend.dial_action(press(True), False), ("mute-toggle", True))
+        self.assertEqual(backend.dial_action(press(True), True), (None, True))  # held, no repeat
+        self.assertEqual(backend.dial_action(press(False), True), (None, False))
+        self.assertEqual(backend.dial_action(bytes([0, 0x01, 0x0f]) + bytes(61), False), (None, False))
+
+    def test_dial_coalesces_steps_while_command_runs(self):
+        dial = backend.Dial.__new__(backend.Dial)
+        dial.pressed, dial.pending, dial.child = False, 0, None
+        commands = []
+        child = Mock()
+        child.poll.return_value = None
+        dial.run = lambda action: (commands.append(action), setattr(dial, "child", child))
+        turn = lambda value: bytes([0, 0x05, 0, 0, value]) + bytes(59)
+        for value in (1, 1, 1, 255):
+            dial.handle(turn(value))
+        self.assertEqual(commands, ["+5"])
+        child.poll.return_value = 0
+        dial.flush()
+        self.assertEqual(commands, ["+5", "+5"])
+
+    def test_volume_command_falls_back_to_wpctl(self):
+        with patch.object(backend.shutil, "which", return_value=None):
+            self.assertEqual(backend.volume_command("-10")[-1], "10%-")
+            self.assertIn("toggle", backend.volume_command("mute-toggle"))
 
     def test_discovery_excludes_input_interface_and_other_products(self):
         with tempfile.TemporaryDirectory() as directory:

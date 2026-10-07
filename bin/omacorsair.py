@@ -16,9 +16,11 @@ import os
 from pathlib import Path
 import re
 import select
+import shutil
 import signal
 import stat
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -31,6 +33,11 @@ HARDWARE_MODE = bytes.fromhex("01 03 00 01")
 ACTIVATE_LEDS = bytes.fromhex("0d 00 22")
 FIRMWARE = bytes.fromhex("02 13")
 KEEPALIVE = bytes.fromhex("12")
+# In software mode the firmware reports the volume dial on vendor interface 02
+# instead of as media keys on interface 00 (OpenLinkHub backendListener).
+DIAL_INTERFACE = "02"
+DIAL_STEP = 5
+VOLUME_COMMAND = "omarchy-audio-output-volume"
 STOP = False
 CONFIG_PATH = Path.home() / ".config/omarchy/omacorsair.json"
 STATUS_PATH = Path.home() / ".local/state/omarchy/omacorsair/status.json"
@@ -267,15 +274,15 @@ def vivid(color):
     return "".join(f"{int(c * 255):02x}" for c in colorsys.hsv_to_rgb(h, s, v))
 
 
-def candidates():
-    """Only USB interface 01 of the exact attached K65 Plus model."""
+def candidates(number="01"):
+    """Only one USB interface (default 01, lighting) of the exact K65 Plus model."""
     for node in sorted(HID_ROOT.glob("hidraw*")):
         try:
             device = (node / "device").resolve()
             if DEVICE_ID not in (device / "uevent").read_text().splitlines():
                 continue
             interface = device.parent / "bInterfaceNumber"
-            if interface.read_text().strip() != "01":
+            if interface.read_text().strip() != number:
                 continue
             yield Path("/dev") / node.name
         except (OSError, ValueError):
@@ -368,6 +375,87 @@ class Keyboard:
             os.close(self.fd)
 
 
+def dial_action(data, pressed):
+    """Map an interface-02 report to (volume action or None, dial pressed state)."""
+    if len(data) > 4 and data[1] == 0x05:
+        return {1: "raise", 255: "lower"}.get(data[4]), pressed
+    if len(data) > 19 and data[1] == 0x02:
+        now = data[19] == 0x02
+        return ("mute-toggle" if now and not pressed else None), now
+    return None, pressed
+
+
+def volume_command(action):
+    command = shutil.which(VOLUME_COMMAND) or shutil.which(VOLUME_COMMAND, path="/usr/share/omarchy/bin")
+    if command:
+        return [command, action]
+    if action == "mute-toggle":
+        return ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
+    return ["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{abs(int(action))}%{'+' if int(action) > 0 else '-'}"]
+
+
+class Dial:
+    """Read-only volume dial listener. Never writes to the device."""
+
+    def __init__(self, path):
+        self.fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW)
+        try:
+            if not stat.S_ISCHR(os.fstat(self.fd).st_mode):
+                raise OSError("not a character device")
+            info = bytearray(8)
+            fcntl.ioctl(self.fd, 0x80084803, info, True)
+            if struct.unpack("IHH", info) != (3, 0x1B1C, 0x2B11):
+                raise OSError("unexpected HID device")
+        except BaseException:
+            os.close(self.fd)
+            raise
+        self.pressed = False
+        self.pending = 0  # coalesced volume steps while a command is running
+        self.child = None
+
+    def run(self, action):
+        try:
+            self.child = subprocess.Popen(volume_command(action), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as error:
+            log(f"volume command failed: {error}")
+
+    def flush(self):
+        if self.child is not None and self.child.poll() is None:
+            return
+        self.child = None
+        if self.pending:
+            step, self.pending = self.pending, 0
+            self.run(f"{step:+d}")
+
+    def handle(self, data):
+        action, self.pressed = dial_action(data, self.pressed)
+        if action == "mute-toggle":
+            self.run(action)
+        elif action:
+            self.pending += DIAL_STEP if action == "raise" else -DIAL_STEP
+        self.flush()
+
+    def wait(self, timeout):
+        """Sleep up to timeout, reacting to dial events immediately."""
+        deadline = time.monotonic() + timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            if select.select([self.fd], [], [], min(remaining, 0.03) if self.pending else remaining)[0]:
+                self.handle(os.read(self.fd, 64))
+            else:
+                self.flush()
+
+    def close(self):
+        os.close(self.fd)
+
+
+def open_dial():
+    path = next(candidates(DIAL_INTERFACE), None)
+    if path is None:
+        raise OSError("volume dial interface 02 not found")
+    return Dial(path)
+
+
 def stop(_signal, _frame):
     global STOP
     STOP = True
@@ -381,6 +469,9 @@ def run_daemon(raw=False):
     last_status = None
     last_config = None
     active_mode = None
+    dial = None
+    next_dial_attempt = 0
+    dial_error = None
     animation_started = time.monotonic()
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
@@ -394,6 +485,9 @@ def run_daemon(raw=False):
                 color = read_color() if config["mode"] == "theme" else None
                 target = render_frame(config, color, raw, time.monotonic() - animation_started)
                 if config["mode"] == "hardware":
+                    if dial:
+                        dial.close()
+                        dial = None
                     if keyboard:
                         keyboard.close()
                         keyboard = None
@@ -421,15 +515,30 @@ def run_daemon(raw=False):
                         if time.monotonic() >= next_keepalive:
                             keyboard.transfer(KEEPALIVE)
                             next_keepalive = time.monotonic() + 10
+                # Software mode silences the dial's media keys; take over while active.
+                if keyboard and keyboard.software_mode and dial is None and time.monotonic() >= next_dial_attempt:
+                    try:
+                        dial = open_dial()
+                        dial_error = None
+                        log("volume dial active")
+                    except OSError as error:
+                        next_dial_attempt = time.monotonic() + 5
+                        if str(error) != dial_error:
+                            dial_error = str(error)
+                            hint = "; re-run install-device-access.sh" if isinstance(error, PermissionError) else ""
+                            log(f"volume dial unavailable: {error}{hint}")
                 last_error = None
                 status = {"connected": keyboard is not None if config["mode"] != "hardware" else next(candidates(), None) is not None,
                           "applied": applied is not None, "mode": config["mode"], "settings": config,
-                          "started": animation_started, "error": ""}
+                          "started": animation_started, "dial": dial is not None, "error": ""}
             except (OSError, ValueError, UnicodeError) as error:
                 message = str(error)
                 if message != last_error:
                     log(message)
                 last_error = message
+                if dial:
+                    dial.close()
+                    dial = None
                 if keyboard:
                     try:
                         keyboard.close()
@@ -441,8 +550,19 @@ def run_daemon(raw=False):
             if status != last_status:
                 atomic_json(STATUS_PATH, status)
                 last_status = status
-            time.sleep(0.08 if active_mode in ANIMATED_MODES and keyboard is not None else 0.25)
+            delay = 0.08 if active_mode in ANIMATED_MODES and keyboard is not None else 0.25
+            if dial:
+                try:
+                    dial.wait(delay)
+                except OSError as error:
+                    log(f"volume dial disconnected: {error}")
+                    dial.close()
+                    dial = None
+            else:
+                time.sleep(delay)
     finally:
+        if dial:
+            dial.close()
         if keyboard:
             try:
                 keyboard.close()

@@ -1,2 +1,3 @@
-# Grant the active local desktop user access to the K65 Plus vendor interface.
-ACTION!="remove", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="2b11", ENV{ID_USB_INTERFACE_NUM}=="01", TAG+="uaccess"
+# Grant the active local desktop user access to the K65 Plus vendor interfaces:
+# 01 for lighting commands, 02 (read-only use) for the volume dial in software mode.
+ACTION!="remove", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="2b11", ENV{ID_USB_INTERFACE_NUM}=="01|02", TAG+="uaccess"
