@@ -2,15 +2,15 @@
   "schemaVersion": 1,
   "id": "case.omacorsair",
   "name": "Omacorsair",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "amoltyagi",
   "license": "GPL-3.0-only",
-  "description": "A keyboard control center: English/German layout switching plus 28 Corsair K65 Plus looks, nine animations, a wheel-driven preview gallery and speed controls.",
+  "description": "A keyboard control center: keyboard layout switching (such as EN/DE) plus 28 Corsair K65 Plus looks, nine animations, a wheel-driven preview gallery and speed controls.",
   "kinds": ["service", "bar-widget"],
   "entryPoints": {"service": "Service.qml", "barWidget": "Panel.qml"},
   "barWidget": {
     "displayName": "Corsair Keyboard",
-    "description": "Switch English/German and pick lighting looks, colors, motion speed and brightness",
+    "description": "Switch keyboard layouts and pick lighting looks, colors, motion speed and brightness",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"

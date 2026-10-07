@@ -45,7 +45,7 @@ All are endpoint bytes passed to `report()`:
 | `FIRMWARE` | `02 13` | Reply bytes: major `data[3]`, minor `data[4]`, patch `data[5:7]` little-endian. Printed as `major.minor.patch`. Needs at least 7 bytes. |
 | `KEEPALIVE` | `12` | Sent every 10 s while the lighting is idle. |
 
-`Keyboard.apply()` sequence on first use: `SOFTWARE_MODE`, `ACTIVATE_LEDS`, sleep 0.5 s, then the color stream. Later calls only send the color stream.
+`Keyboard.apply()` sequence on first use: `SOFTWARE_MODE`, `ACTIVATE_LEDS`, sleep 0.5 s, then the color stream. Later calls only send the color stream. Each step is remembered once it succeeded (`software_mode` after `SOFTWARE_MODE`, `leds_active` after `ACTIVATE_LEDS` and the sleep), so a retry after a failed transfer neither repeats `SOFTWARE_MODE` nor skips `ACTIVATE_LEDS`. A color stream that failed halfway is always resent from its first chunk.
 
 ## Color buffer
 

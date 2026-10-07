@@ -1,5 +1,10 @@
+import contextlib
+import errno
 import importlib.util
+import io
+import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -160,6 +165,101 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 backend.validate_config({"speed": speed})
 
+    def test_speed_change_keeps_animation_phase_continuous(self):
+        origin = backend.restart_animation(100.0, 50)
+        now = 103.137
+        before = backend.animation_phase(origin, now)
+        retimed = backend.retime_animation(origin, now, 20)
+        self.assertAlmostEqual(backend.animation_phase(retimed, now), before)
+        # From the change on, time runs at the new speed.
+        self.assertAlmostEqual(backend.animation_phase(retimed, now + 2), before + 2 * backend.speed_factor(20))
+        for mode in backend.ANIMATED_MODES:
+            config = backend.validate_config({"mode": mode})
+            frame_before = backend.render_frame(config, phase=before)
+            frame_after = backend.render_frame(config, phase=backend.animation_phase(retimed, now + 1e-6))
+            self.assertEqual(len(frame_before), 371)
+            self.assertLessEqual(max(abs(a - b) for a, b in zip(frame_before, frame_after)), 1, mode)
+        # The old behaviour (rescaling the whole elapsed time) jumped.
+        config = backend.validate_config({"mode": "rainbowwave"})
+        jumped = backend.render_frame(backend.validate_config({"mode": "rainbowwave", "speed": 20}), elapsed=now - 100.0)
+        self.assertNotEqual(jumped, backend.render_frame(config, phase=before))
+
+    def test_status_phase_matches_daemon_phase_and_old_status_files(self):
+        config = backend.validate_config({"mode": "duotone", "speed": 20})
+        origin = backend.retime_animation(backend.restart_animation(100.0, 50), 110.0, 20)
+        device = {"mode": "duotone", "settings": config, **origin}
+        for now in (110.0, 110.4, 250.0):
+            self.assertAlmostEqual(backend.status_phase(device, config, now), backend.animation_phase(origin, now))
+        # Old daemons wrote only `started`: phase 0 at that time, configured speed.
+        old = {"mode": "duotone", "started": 100.0}
+        self.assertAlmostEqual(backend.status_phase(old, config, 104.0), 4.0 * backend.speed_factor(20))
+        # A mode the daemon has not picked up yet restarts at phase 0; bad values are ignored.
+        self.assertEqual(backend.status_phase({"mode": "aurora", "started": 1.0}, config, 50.0), 0.0)
+        junk = {"mode": "duotone", "started": "x", "phase0": float("nan"), "speed": 7}
+        self.assertEqual(backend.status_phase(junk, config, 50.0), 0.0)
+        self.assertEqual(backend.status_phase({"connected": False, "error": "x"}, config, 50.0), 0.0)
+
+    def test_daemon_keeps_phase_across_speed_change_and_preview_agrees(self):
+        configs = [backend.validate_config({"mode": "rainbowwave", "speed": speed}) for speed in (50, 50, 20, 20)]
+        clock = [1000.0]
+        times, frames, statuses = [], [], []
+        keyboard = Mock()
+        keyboard.firmware.return_value = "5.26.154"
+        keyboard.apply.side_effect = lambda frame: (frames.append(frame), times.append(clock[0]))
+        reads = iter(configs)
+
+        def tick(_duration):
+            clock[0] += 0.5
+            if len(frames) == len(configs):
+                backend.STOP = True
+
+        with patch.object(backend, "STOP", False), \
+                patch.object(backend, "read_config", side_effect=lambda: next(reads)), \
+                patch.object(backend, "candidates", side_effect=lambda: iter([Path("/dev/hidraw2")])), \
+                patch.object(backend, "Keyboard", return_value=keyboard), \
+                patch.object(backend, "open_dial", side_effect=OSError("no dial")), \
+                patch.object(backend, "atomic_json", side_effect=lambda path, value: statuses.append(value)), \
+                patch.object(backend, "log"), patch.object(backend.signal, "signal"), \
+                patch.object(backend.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(backend.time, "sleep", side_effect=tick):
+            backend.run_daemon()
+        self.assertEqual(len(frames), 4)
+        t0, change = times[0], times[2]
+        for index, (when, frame) in enumerate(zip(times, frames)):
+            phase = (when - t0) * backend.speed_factor(50) if when < change else \
+                (change - t0) * backend.speed_factor(50) + (when - change) * backend.speed_factor(20)
+            self.assertEqual(frame, backend.render_frame(configs[index], phase=phase), index)
+        # Status is rewritten only when the origin or settings change, not per frame.
+        self.assertEqual(len(statuses), 2)
+        self.assertEqual((statuses[0]["started"], statuses[0]["phase0"], statuses[0]["speed"]), (t0, 0.0, 50))
+        self.assertEqual((statuses[1]["started"], statuses[1]["speed"]), (change, 20))
+        self.assertAlmostEqual(statuses[1]["phase0"], (change - t0) * backend.speed_factor(50))
+        # The `status` command, run later by the panel, previews the device's current frame.
+        with tempfile.TemporaryDirectory() as directory:
+            config_path, status_path = Path(directory) / "config.json", Path(directory) / "status.json"
+            config_path.write_text(json.dumps(configs[-1]))
+            status_path.write_text(json.dumps(statuses[-1]))
+            for now in (times[-1], times[-1] + 0.3):
+                clock[0] = now
+                out = io.StringIO()
+                with patch.object(backend, "CONFIG_PATH", config_path), patch.object(backend, "STATUS_PATH", status_path), \
+                        patch.object(backend.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(sys, "argv", ["omacorsair.py", "status"]), contextlib.redirect_stdout(out):
+                    backend.main()
+                preview = json.loads(out.getvalue())["preview"]
+                device_frame = backend.render_frame(configs[-1], phase=backend.animation_phase(statuses[-1], now))
+                expected = [["#" + device_frame[offset:offset + 3].hex() for offset in offsets] for offsets in backend.ROW_OFFSETS]
+                self.assertEqual(preview, expected)
+
+    def test_mode_change_restarts_animation(self):
+        origin = backend.restart_animation(100.0, 50)
+        restarted = backend.restart_animation(130.0, 50)
+        self.assertEqual(backend.animation_phase(restarted, 130.0), 0.0)
+        config = backend.validate_config({"mode": "aurora"})
+        self.assertEqual(backend.render_frame(config, phase=backend.animation_phase(restarted, 130.0)),
+                         backend.render_frame(config, elapsed=0))
+        self.assertGreater(backend.animation_phase(origin, 130.0), 0)
+
     def test_animated_daemon_does_not_log_or_write_status_per_frame(self):
         config = backend.validate_config({"mode": "aurora"})
         keyboard = Mock()
@@ -253,6 +353,249 @@ class ProtocolTests(unittest.TestCase):
                 (node / "device").symlink_to(device)
             with patch.object(backend, "HID_ROOT", root):
                 self.assertEqual(list(backend.candidates()), [Path("/dev/hidraw1")])
+
+
+class FakeKeyboard(backend.Keyboard):
+    """The real Keyboard protocol logic over a scripted transport.
+
+    `fail` maps the 1-based number of a transfer() call to the exception it raises.
+    """
+
+    def __init__(self, fail=None):
+        self.software_mode = False
+        self.fd = 99
+        self.sent = []
+        self.fail = fail or {}
+
+    def firmware(self):
+        return "5.26.154"
+
+    def transfer(self, endpoint, payload=b""):
+        self.sent.append(endpoint)
+        if len(self.sent) in self.fail:
+            raise self.fail[len(self.sent)]
+        return b"\x00" + endpoint[:1] + b"\x00"
+
+    def frames(self):
+        """Number of complete color streams sent (first packet of each starts a frame)."""
+        return sum(endpoint == b"\x06\x00" for endpoint in self.sent)
+
+    def hardware_mode_sent(self):
+        return self.sent.count(backend.HARDWARE_MODE)
+
+
+def run_daemon_passes(modes, keyboards, dial=None, statuses=None):
+    """Run the daemon loop for one iteration per entry of `modes`, one fake keyboard per connection.
+
+    An entry may also be an exception instance, which read_config() then raises. Status dicts
+    written by the daemon are appended to `statuses` when given.
+
+    A fake clock advances 0.5 s per sleep, so animated looks produce a new frame every pass.
+    Returns the Keyboard factory mock, the log mock and the os.close mock.
+    """
+    modes = [{"mode": mode} if isinstance(mode, str) else mode for mode in modes]
+    configs = iter(modes)
+    reads = []
+    clock = [1000.0]
+
+    def read_config():
+        reads.append(1)
+        if len(reads) >= len(modes):
+            backend.STOP = True
+        entry = next(configs)
+        if isinstance(entry, Exception):
+            raise entry
+        return backend.validate_config(entry)
+
+    def advance(_duration):
+        clock[0] += 0.5
+
+    factory = Mock(side_effect=list(keyboards))
+    if dial is not None:
+        dial.wait.side_effect = advance
+    with patch.object(backend, "STOP", False), patch.object(backend, "read_config", side_effect=read_config), \
+            patch.object(backend, "candidates", side_effect=lambda: iter([Path("/dev/hidraw2")])), \
+            patch.object(backend, "Keyboard", factory), \
+            patch.object(backend, "open_dial", **({"return_value": dial} if dial else {"side_effect": OSError("no dial")})), \
+            patch.object(backend, "atomic_json", side_effect=lambda path, value: statuses is None or statuses.append(value)), \
+            patch.object(backend, "log") as log, \
+            patch.object(backend.signal, "signal"), patch.object(backend.os, "close") as close, \
+            patch.object(backend.time, "monotonic", side_effect=lambda: clock[0]), \
+            patch.object(backend.time, "sleep", side_effect=advance):
+        backend.run_daemon()
+    return factory, log, close
+
+
+class ConnectionRecoveryTests(unittest.TestCase):
+    def test_transient_timeout_keeps_connection_and_repaints_in_full(self):
+        # Transfers: 1 SOFTWARE_MODE, 2 ACTIVATE_LEDS, 3-9 the first frame; #5 times out mid-frame.
+        keyboard = FakeKeyboard(fail={5: TimeoutError("no matching reply to command 0700: []")})
+        factory, log, close = run_daemon_passes(["aurora"] * 3, [keyboard])
+        self.assertEqual(factory.call_count, 1)  # no reconnect
+        self.assertEqual(keyboard.sent.count(backend.SOFTWARE_MODE), 1)
+        self.assertEqual(keyboard.sent.count(backend.ACTIVATE_LEDS), 1)
+        # Frame 1 stopped after 3 packets; frames 2 and 3 are complete (7 packets each).
+        self.assertEqual(keyboard.frames(), 3)
+        self.assertEqual(len([e for e in keyboard.sent if e in (b"\x06\x00", b"\x07\x00")]), 3 + 7 + 7)
+        # HARDWARE_MODE only once, from the normal shutdown, never mid-run.
+        self.assertEqual(keyboard.hardware_mode_sent(), 1)
+        self.assertEqual(keyboard.sent[-1], backend.HARDWARE_MODE)
+        close.assert_called_once_with(99)
+        self.assertEqual([call.args[0] for call in log.call_args_list if "no matching reply" in call.args[0]],
+                         ["no matching reply to command 0700: []"])
+
+    def test_retry_sends_the_same_frame_when_nothing_changed(self):
+        keyboard = FakeKeyboard(fail={3: TimeoutError("write timed out")})
+        factory, _, _ = run_daemon_passes(["solid"] * 3, [keyboard])
+        self.assertEqual(factory.call_count, 1)
+        self.assertEqual(keyboard.frames(), 2)  # the failed attempt and one full retry; then nothing to resend
+        self.assertEqual(len([e for e in keyboard.sent if e in (b"\x06\x00", b"\x07\x00")]), 1 + 7)
+
+    def test_failed_activation_is_retried_without_repeating_software_mode(self):
+        keyboard = FakeKeyboard(fail={2: TimeoutError("timed out")})  # SOFTWARE_MODE ok, ACTIVATE_LEDS fails
+        factory, _, _ = run_daemon_passes(["solid"] * 2, [keyboard])
+        self.assertEqual(factory.call_count, 1)
+        self.assertEqual(keyboard.sent[:3], [backend.SOFTWARE_MODE, backend.ACTIVATE_LEDS, backend.ACTIVATE_LEDS])
+        self.assertEqual(keyboard.sent.count(backend.SOFTWARE_MODE), 1)
+        self.assertEqual(keyboard.frames(), 1)
+
+    def test_device_gone_tears_down_and_reconnects(self):
+        for number in (errno.ENODEV, errno.EIO, errno.EPIPE, errno.ENOENT):
+            first = FakeKeyboard(fail={3: OSError(number, "gone")})
+            second = FakeKeyboard()
+            factory, _, close = run_daemon_passes(["solid"] * 2, [first, second])
+            self.assertEqual(factory.call_count, 2, number)
+            self.assertEqual(first.hardware_mode_sent(), 1, number)  # released at once, not after N failures
+            self.assertEqual(second.frames(), 1, number)  # repainted after reconnecting
+            self.assertEqual(close.call_count, 2, number)
+
+    def test_consecutive_failures_tear_down_the_connection(self):
+        timeout = TimeoutError("no matching reply")
+        first = FakeKeyboard(fail={i: timeout for i in range(3, 60)})  # every transfer after the handshake
+        second = FakeKeyboard()
+        passes = backend.MAX_CONSECUTIVE_FAILURES + 1
+        factory, _, _ = run_daemon_passes(["aurora"] * passes, [first, second])
+        self.assertEqual(factory.call_count, 2)
+        # Passes 1..N-1 keep the connection; HARDWARE_MODE appears only after the Nth failure.
+        self.assertEqual(first.hardware_mode_sent(), 1)
+        hardware_at = first.sent.index(backend.HARDWARE_MODE)
+        self.assertEqual(first.sent[:hardware_at].count(b"\x06\x00"), backend.MAX_CONSECUTIVE_FAILURES)
+        self.assertEqual(second.frames(), 1)
+
+    def test_one_failure_less_than_the_limit_keeps_the_connection(self):
+        timeout = TimeoutError("no matching reply")
+        keyboard = FakeKeyboard(fail={i: timeout for i in range(3, 3 + backend.MAX_CONSECUTIVE_FAILURES - 1)})
+        factory, _, _ = run_daemon_passes(["aurora"] * backend.MAX_CONSECUTIVE_FAILURES, [keyboard])
+        self.assertEqual(factory.call_count, 1)
+        self.assertEqual(keyboard.hardware_mode_sent(), 1)  # shutdown only
+        self.assertEqual(keyboard.frames(), backend.MAX_CONSECUTIVE_FAILURES)
+
+    def test_non_consecutive_failures_do_not_accumulate(self):
+        keyboard = FakeKeyboard()
+        failing_passes = {1, 2, 4, 5}
+        original = keyboard.transfer
+        state = {"pass": 0}
+
+        def transfer(endpoint, payload=b""):
+            if endpoint == b"\x06\x00":
+                state["pass"] += 1
+                if state["pass"] in failing_passes:
+                    keyboard.sent.append(endpoint)
+                    raise TimeoutError("no matching reply")
+            return original(endpoint, payload)
+
+        keyboard.transfer = transfer
+        factory, _, _ = run_daemon_passes(["aurora"] * 6, [keyboard])
+        self.assertEqual(state["pass"], 6)
+        self.assertEqual(factory.call_count, 1)
+        self.assertEqual(keyboard.hardware_mode_sent(), 1)  # shutdown only
+
+    def test_handshake_failure_releases_the_candidate_and_retries(self):
+        class NoFirmware(FakeKeyboard):
+            def firmware(self):
+                raise TimeoutError("no matching reply to command 0213: []")
+
+        first, second = NoFirmware(), FakeKeyboard()
+        factory, _, close = run_daemon_passes(["solid"] * 2, [first, second])
+        self.assertEqual(factory.call_count, 2)
+        self.assertEqual(first.sent, [])  # never entered software mode, so nothing to undo
+        self.assertEqual(second.frames(), 1)
+        self.assertEqual(close.call_count, 2)  # the failed candidate's fd, then the second keyboard at shutdown
+
+    def test_hardware_mode_close_failure_does_not_close_twice(self):
+        keyboard = FakeKeyboard()
+        original = keyboard.transfer
+
+        def transfer(endpoint, payload=b""):
+            if endpoint == backend.HARDWARE_MODE:
+                keyboard.sent.append(endpoint)
+                raise OSError(errno.ENODEV, "gone")
+            return original(endpoint, payload)
+
+        keyboard.transfer = transfer
+        _, _, close = run_daemon_passes(["solid", "hardware", "hardware"], [keyboard])
+        self.assertEqual(keyboard.hardware_mode_sent(), 1)
+        close.assert_called_once_with(99)
+
+    def test_dial_is_closed_with_the_keyboard(self):
+        # Transfers 1-9 are pass 1 (handshake and frame); #10 is the first packet of pass 2.
+        first = FakeKeyboard(fail={10: OSError(errno.ENODEV, "gone")})
+        dial = Mock()
+        run_daemon_passes(["aurora"] * 3, [first, FakeKeyboard()], dial=dial)
+        # Opened with the first keyboard, closed on its unplug, reopened for the next one, closed at shutdown.
+        self.assertEqual(dial.close.call_count, 2)
+
+    def test_dial_stays_open_through_a_transient_error(self):
+        keyboard = FakeKeyboard(fail={10: TimeoutError("no matching reply")})
+        dial = Mock()
+        factory, _, _ = run_daemon_passes(["aurora"] * 3, [keyboard], dial=dial)
+        self.assertEqual(factory.call_count, 1)
+        dial.close.assert_called_once()  # shutdown only
+
+    def test_error_status_keeps_mode_settings_and_dial(self):
+        statuses = []
+        dial = Mock()
+        keyboard = FakeKeyboard(fail={10: TimeoutError("no matching reply to command 0600: []")})
+        run_daemon_passes([{"mode": "aurora", "speed": 30}] * 3, [keyboard], dial=dial, statuses=statuses)
+        self.assertEqual(len(statuses), 3)
+        good, error, recovered = statuses
+        self.assertEqual((good["connected"], good["applied"], good["error"]), (True, True, ""))
+        self.assertEqual(error["connected"], False)
+        self.assertEqual(error["applied"], False)
+        self.assertEqual(error["error"], "no matching reply to command 0600: []")
+        self.assertEqual(error["mode"], "aurora")
+        self.assertEqual(error["settings"], backend.validate_config({"mode": "aurora", "speed": 30}))
+        self.assertEqual(error["dial"], True)  # a transient error leaves the dial open
+        # The animation clock is kept too, so the panel preview keeps matching the device.
+        self.assertEqual({key: error[key] for key in ("started", "phase0", "speed")},
+                         {key: good[key] for key in ("started", "phase0", "speed")})
+        self.assertEqual((recovered["connected"], recovered["applied"], recovered["error"]), (True, True, ""))
+
+    def test_error_status_after_teardown_reports_closed_dial(self):
+        statuses = []
+        first = FakeKeyboard(fail={10: OSError(errno.ENODEV, "No such device")})
+        run_daemon_passes(["aurora"] * 3, [first, FakeKeyboard()], dial=Mock(), statuses=statuses)
+        error = next(status for status in statuses if status["error"])
+        self.assertEqual((error["mode"], error["dial"], error["connected"]), ("aurora", False, False))
+
+    def test_error_before_any_config_has_no_mode_or_settings(self):
+        statuses = []
+        run_daemon_passes([ValueError("bad config"), "solid"], [FakeKeyboard()], statuses=statuses)
+        self.assertEqual(statuses[0], {"connected": False, "applied": False, "error": "bad config", "dial": False})
+        self.assertEqual(statuses[1]["mode"], "solid")
+
+    def test_config_error_keeps_last_known_mode_and_settings(self):
+        statuses = []
+        run_daemon_passes(["gaming", ValueError("bad config"), "gaming"], [FakeKeyboard()], statuses=statuses)
+        error = statuses[1]
+        self.assertEqual((error["mode"], error["error"], error["connected"]), ("gaming", "bad config", False))
+        self.assertEqual(error["settings"], backend.validate_config({"mode": "gaming"}))
+
+    def test_device_gone_classification(self):
+        for number in (errno.ENODEV, errno.EIO, errno.EPIPE, errno.ENOENT, errno.ENXIO):
+            self.assertTrue(backend.device_gone(OSError(number, "x")), number)
+        for error in (TimeoutError("x"), OSError("short HID write"), OSError(errno.EAGAIN, "x"), ValueError("x")):
+            self.assertFalse(backend.device_gone(error), error)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,9 @@ Ui.Panel {
     property bool galleryExpanded: false
     property string category: "All"
     property var preview: []
-    property var language: ({active: "us", label: "EN", name: "English (US)", available: []})
+    property var language: ({active: "us", label: "EN", name: "English (US)", available: [], layouts: []})
+    readonly property var layoutChoices: language.layouts || []
+    readonly property bool canSwitchLayout: layoutChoices.length > 1
     property string languageError: ""
     property bool languageRefreshQueued: false
     property bool baseColorDirty: false
@@ -128,11 +130,63 @@ Ui.Panel {
         submit({mode: currentLook.custom ? currentLook.id : "solid", color: base, accent: accent})
     }
 
+    // A bar surface exists per monitor, so this Panel is instantiated once per
+    // screen, but an IPC target accepts only one handler. Only the instance on
+    // the first screen registers; it then routes open/close/toggle to the
+    // instance on the focused monitor (the same rule the shell uses for
+    // `omarchy-shell shell toggle <id>`). If that screen goes away, the binding
+    // re-evaluates and the instance on the new first screen takes over.
+    readonly property string screenName: QsWindow.window && QsWindow.window.screen ? String(QsWindow.window.screen.name || "") : ""
+    readonly property bool ipcOwner: screenName !== "" && Quickshell.screens.length > 0 && String(Quickshell.screens[0].name || "") === screenName
+
+    function livePanels() {
+        var items = root.bar && typeof root.bar.moduleWidgets === "function" ? root.bar.moduleWidgets(root.moduleName) : []
+        var panels = items.filter(item => item && typeof item.open === "function" && typeof item.close === "function")
+        return panels.length ? panels : [root]
+    }
+
+    function focusedPanel(panels) {
+        var monitor = Hyprland.focusedMonitor
+        var name = monitor ? String(monitor.name || "") : ""
+        if (name !== "") {
+            for (var i = 0; i < panels.length; i++) {
+                if (panels[i].screenName === name) return panels[i]
+            }
+        }
+        return root
+    }
+
+    function openOnFocused() {
+        var panels = livePanels()
+        var target = focusedPanel(panels)
+        panels.forEach(panel => { if (panel !== target && panel.opened) panel.close() })
+        target.open()
+    }
+
+    function closeAll() {
+        livePanels().forEach(panel => panel.close())
+    }
+
+    function toggleOnFocused() {
+        var panels = livePanels()
+        var openPanels = panels.filter(panel => panel.opened)
+        if (openPanels.length) openPanels.forEach(panel => panel.close())
+        else focusedPanel(panels).open()
+    }
+
+    // Other monitors' copies hold their own config/device snapshot; refresh
+    // them after a change so IPC next/previous (served by one copy) never
+    // starts from a stale look.
+    function refreshPeers() {
+        livePanels().forEach(panel => { if (panel !== root) panel.refresh() })
+    }
+
     IpcHandler {
+        enabled: root.ipcOwner
         target: root.ipcTarget
-        function open(): void { root.open() }
-        function close(): void { root.close() }
-        function toggle(): void { root.toggle() }
+        function open(): void { root.openOnFocused() }
+        function close(): void { root.closeAll() }
+        function toggle(): void { root.toggleOnFocused() }
         function setColor(color: string): void { root.submit({mode: "solid", color: color}) }
         function setMode(mode: string): void { root.submit({mode: mode}) }
         function next(): void { root.cycle(1) }
@@ -204,7 +258,10 @@ Ui.Panel {
                 var update = root.pendingUpdate
                 root.pendingUpdate = null
                 Qt.callLater(() => root.submit(update))
-            } else Qt.callLater(root.refresh)
+            } else {
+                Qt.callLater(root.refresh)
+                Qt.callLater(root.refreshPeers)
+            }
         }
     }
 
@@ -214,10 +271,10 @@ Ui.Panel {
         bar: root.bar
         text: " " + (root.language.label || "EN")
         fontSize: Style.font.bodySmall
-        tooltipText: root.language.name + " · Corsair keyboard\nMiddle-click: EN/DE · Right-click: theme · Wheel: lighting"
+        tooltipText: root.language.name + " · Corsair keyboard\n" + (root.canSwitchLayout ? "Middle-click: next layout · " : "") + "Right-click: theme · Wheel: lighting"
         onPressed: b => {
             if (b === Qt.RightButton) root.submit({mode: "theme"})
-            else if (b === Qt.MiddleButton) root.switchLanguage("toggle")
+            else if (b === Qt.MiddleButton) { if (root.canSwitchLayout) root.switchLanguage("toggle") }
             else root.toggle()
         }
         onWheelMoved: delta => { if (delta !== 0) root.cycle(delta < 0 ? 1 : -1) }
@@ -259,26 +316,34 @@ Ui.Panel {
                         detail: root.language.label || "EN"
                     }
 
-                    Row {
+                    Grid {
+                        id: layoutGrid
                         width: parent.width
+                        visible: root.canSwitchLayout
+                        // Up to four per row; names are only spelled out while the buttons are wide.
+                        columns: Math.max(1, Math.min(root.layoutChoices.length, root.layoutChoices.length > 2 ? 4 : 2))
                         spacing: Style.space(6)
                         Repeater {
-                            model: [{id: "us", name: "EN · English"}, {id: "de", name: "DE · Deutsch"}]
+                            model: root.layoutChoices
                             Ui.Button {
                                 required property var modelData
-                                width: (parent.width - parent.spacing) / 2
-                                text: modelData.name
-                                selected: root.language.active === modelData.id
-                                enabled: !languageAction.running && root.language.available.indexOf(modelData.id) >= 0
+                                width: (layoutGrid.width - layoutGrid.spacing * (layoutGrid.columns - 1)) / layoutGrid.columns
+                                text: root.layoutChoices.length > 2 || modelData.name.length > 16 ? modelData.label : modelData.label + " · " + modelData.name
+                                tooltipText: modelData.name
+                                selected: root.language.active === modelData.code
+                                enabled: !languageAction.running
                                 bordered: true
                                 focusable: true
-                                onClicked: root.switchLanguage(modelData.id)
+                                onClicked: root.switchLanguage(modelData.code)
                             }
                         }
                     }
                     Text {
                         width: parent.width
-                        text: root.languageError || "Ctrl+Alt+Space or middle-click the bar icon to switch language"
+                        visible: root.languageError !== "" || root.layoutChoices.length > 0
+                        text: root.languageError || (root.canSwitchLayout
+                            ? "Ctrl+Alt+Space or middle-click the bar icon to switch layout"
+                            : "Only one keyboard layout is configured. Add more, for example kb_layout = \"us,de\" in ~/.config/hypr/input.lua, to switch here.")
                         textFormat: Text.PlainText
                         wrapMode: Text.WordWrap
                         color: root.languageError ? "#ff7070" : Color.foreground

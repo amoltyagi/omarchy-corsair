@@ -9,6 +9,7 @@ the keyboard input interface or writes onboard profiles/key assignments.
 
 import argparse
 import colorsys
+import errno
 import fcntl
 import json
 import math
@@ -38,6 +39,14 @@ KEEPALIVE = bytes.fromhex("12")
 DIAL_INTERFACE = "02"
 DIAL_STEP = 5
 VOLUME_COMMAND = "omarchy-audio-output-volume"
+# A failed transfer is usually a one-off (a missed reply, a busy bus) and must not
+# bounce the lighting through hardware mode. Errors that mean the device is gone
+# tear the connection down at once; anything else only after this many failed loop
+# passes in a row. A failing transfer blocks for 1.0 to 1.5 s and the loop adds
+# 0.08 to 0.25 s, so three in a row is at least ~3 s of a silent device, long
+# enough to rule out a blip and short enough to start recovering quickly.
+MAX_CONSECUTIVE_FAILURES = 3
+DEVICE_GONE_ERRNOS = frozenset({errno.ENODEV, errno.EIO, errno.EPIPE, errno.ENOENT, errno.ENXIO})
 STOP = False
 CONFIG_PATH = Path.home() / ".config/omarchy/omacorsair.json"
 STATUS_PATH = Path.home() / ".local/state/omarchy/omacorsair/status.json"
@@ -209,7 +218,45 @@ def animated_rgb(mode, x, y, seed, t, base, accent):
     raise ValueError("unknown animated effect")
 
 
-def render_frame(config, theme_color=None, raw=False, elapsed=0):
+def speed_factor(speed):
+    """Animation clock rate (phase units per second) for a 10..100 speed setting."""
+    return 0.2 + speed * 0.016
+
+
+def restart_animation(now, speed):
+    """A fresh animation clock: phase 0 at `now`, running at `speed`."""
+    return {"started": now, "phase0": 0.0, "speed": speed}
+
+
+def retime_animation(origin, now, speed):
+    """Change speed without a jump: bank the phase reached so far as the new origin."""
+    return {"started": now, "phase0": animation_phase(origin, now), "speed": speed}
+
+
+def animation_phase(origin, now):
+    return origin["phase0"] + max(0.0, now - origin["started"]) * speed_factor(origin["speed"])
+
+
+def status_phase(device, config, now):
+    """The daemon's current animation phase, rebuilt from status.json for the preview.
+
+    Status files from older versions have no phase0/speed; they mean phase 0 and the
+    configured speed, which is what the old formula computed.
+    """
+    def number(key, default):
+        value = device.get(key)
+        return float(value) if type(value) in (int, float) and math.isfinite(value) else default
+
+    if device.get("mode", config["mode"]) != config["mode"]:
+        return 0.0  # the daemon has not picked up the new mode yet; it restarts at phase 0
+    speed = device.get("speed")
+    if type(speed) is not int or not 10 <= speed <= 100:
+        speed = config["speed"]
+    origin = {"started": number("started", now), "phase0": number("phase0", 0.0), "speed": speed}
+    return animation_phase(origin, now)
+
+
+def render_frame(config, theme_color=None, raw=False, elapsed=0, phase=None):
     mode = config["mode"]
     if mode == "hardware" or (mode == "theme" and theme_color is None):
         return None
@@ -228,7 +275,7 @@ def render_frame(config, theme_color=None, raw=False, elapsed=0):
                 data[offset:offset + 3] = bytes.fromhex(row_color)
     elif mode in ANIMATED_MODES:
         data = bytearray(371)
-        t = elapsed * (0.2 + config["speed"] * 0.016)
+        t = phase if phase is not None else elapsed * speed_factor(config["speed"])
         base, accent = rgb(config["color"]), rgb(config["accent"])
         for row, offsets in enumerate(ROW_OFFSETS):
             for column, offset in enumerate(offsets):
@@ -309,7 +356,14 @@ def color_packets(color):
         yield endpoint, buffer[offset:offset + 61]
 
 
+def device_gone(error):
+    """True for errors that mean the keyboard was unplugged, not that one transfer failed."""
+    return isinstance(error, OSError) and error.errno in DEVICE_GONE_ERRNOS
+
+
 class Keyboard:
+    leds_active = False  # SOFTWARE_MODE + ACTIVATE_LEDS completed on this connection
+
     def __init__(self, path):
         self.path = path
         self.fd = os.open(path, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW)
@@ -359,11 +413,15 @@ class Keyboard:
         return f"{data[3]}.{data[4]}.{int.from_bytes(data[5:7], 'little')}"
 
     def apply(self, color):
-        if not self.software_mode:
-            self.transfer(SOFTWARE_MODE)
-            self.software_mode = True
+        if not self.leds_active:
+            # Each step is recorded as soon as it succeeded, so a retry after a failed
+            # transfer neither repeats SOFTWARE_MODE nor skips ACTIVATE_LEDS.
+            if not self.software_mode:
+                self.transfer(SOFTWARE_MODE)
+                self.software_mode = True
             self.transfer(ACTIVATE_LEDS)
             time.sleep(0.5)
+            self.leds_active = True
         for endpoint, payload in color_packets(color):
             self.transfer(endpoint, payload)
 
@@ -472,26 +530,32 @@ def run_daemon(raw=False):
     dial = None
     next_dial_attempt = 0
     dial_error = None
-    animation_started = time.monotonic()
+    animation = restart_animation(time.monotonic(), DEFAULT_CONFIG["speed"])
+    failures = 0
+    known_config = None  # last config that validated; error statuses keep reporting it
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
         while not STOP:
             try:
-                config = read_config()
+                config = known_config = read_config()
+                now = time.monotonic()
                 if config["mode"] != active_mode:
                     active_mode = config["mode"]
-                    animation_started = time.monotonic()
+                    animation = restart_animation(now, config["speed"])
+                elif config["speed"] != animation["speed"]:
+                    animation = retime_animation(animation, now, config["speed"])
                 color = read_color() if config["mode"] == "theme" else None
-                target = render_frame(config, color, raw, time.monotonic() - animation_started)
+                target = render_frame(config, color, raw, phase=animation_phase(animation, now))
                 if config["mode"] == "hardware":
                     if dial:
-                        dial.close()
-                        dial = None
+                        closing, dial = dial, None
+                        closing.close()
                     if keyboard:
-                        keyboard.close()
-                        keyboard = None
-                        applied = None
+                        # Drop the reference first: close() always releases the fd, even
+                        # when HARDWARE_MODE fails, so it must not be closed twice.
+                        closing, keyboard, applied = keyboard, None, None
+                        closing.close()
                 elif target is None:
                     # A theme without a keyboard color leaves current lighting alone.
                     if keyboard and keyboard.software_mode and time.monotonic() >= next_keepalive:
@@ -501,8 +565,14 @@ def run_daemon(raw=False):
                     if keyboard is None:
                         path = next(candidates(), None)
                         if path is not None:
-                            keyboard = Keyboard(path)
-                            log(f"connected {path}, firmware {keyboard.firmware()}")
+                            candidate = Keyboard(path)
+                            try:
+                                firmware = candidate.firmware()
+                            except BaseException:
+                                candidate.close()
+                                raise
+                            keyboard = candidate
+                            log(f"connected {path}, firmware {firmware}")
                             applied = None
                     if keyboard:
                         if target != applied:
@@ -528,25 +598,37 @@ def run_daemon(raw=False):
                             hint = "; re-run install-device-access.sh" if isinstance(error, PermissionError) else ""
                             log(f"volume dial unavailable: {error}{hint}")
                 last_error = None
+                failures = 0
                 status = {"connected": keyboard is not None if config["mode"] != "hardware" else next(candidates(), None) is not None,
                           "applied": applied is not None, "mode": config["mode"], "settings": config,
-                          "started": animation_started, "dial": dial is not None, "error": ""}
+                          **animation, "dial": dial is not None, "error": ""}
             except (OSError, ValueError, UnicodeError) as error:
                 message = str(error)
                 if message != last_error:
                     log(message)
                 last_error = message
-                if dial:
-                    dial.close()
-                    dial = None
-                if keyboard:
-                    try:
-                        keyboard.close()
-                    except OSError:
-                        pass
-                    keyboard = None
-                    applied = None
-                status = {"connected": False, "applied": False, "error": message}
+                failures += 1
+                # The failed pass may have stopped halfway through a frame (or never
+                # reached the device), so whatever comes next must be sent in full.
+                applied = None
+                if device_gone(error) or failures >= MAX_CONSECUTIVE_FAILURES:
+                    if not device_gone(error) and keyboard:
+                        log(f"{failures} errors in a row, reconnecting")
+                    failures = 0
+                    if dial:
+                        dial.close()
+                        dial = None
+                    if keyboard:
+                        try:
+                            keyboard.close()
+                        except OSError:
+                            pass
+                        keyboard = None
+                # Keep what the panel needs to stay useful (look, settings, preview clock, dial)
+                # alongside the error; only the connection fields change.
+                status = {"connected": False, "applied": False, "error": message, "dial": dial is not None}
+                if known_config is not None:
+                    status.update(mode=known_config["mode"], settings=known_config, **animation)
             if status != last_status:
                 atomic_json(STATUS_PATH, status)
                 last_status = status
@@ -589,7 +671,7 @@ def main():
         config = read_config()
         device = read_json(STATUS_PATH, {"connected": False, "error": "Waiting for keyboard"})
         theme = read_color() if config["mode"] == "theme" else None
-        frame = render_frame(config, theme, args.raw, max(0, time.monotonic() - device.get("started", time.monotonic())))
+        frame = render_frame(config, theme, args.raw, phase=status_phase(device, config, time.monotonic()))
         preview = [["#" + frame[offset:offset + 3].hex() for offset in offsets] for offsets in ROW_OFFSETS] if frame else []
         print(json.dumps({"config": config, "device": device, "catalog": CATALOG, "preview": preview}))
     elif args.action == "daemon":
