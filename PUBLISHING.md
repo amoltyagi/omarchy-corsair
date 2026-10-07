@@ -9,17 +9,17 @@ full GPL-3.0 license text, upstream attribution, and automated unit tests.
 
 - **Name:** Omacorsair
 - **Plugin ID:** `case.omacorsair`
-- **Version:** `1.2.0`
+- **Version:** `1.3.0`
 - **Author / publisher:** `amoltyagi`
 - **Category:** System / Hardware (choose the closest available form category)
 - **Suggested tags:** keyboard, corsair, rgb, lighting, hyprland
 - **Description:** A keyboard control center for the wired Corsair K65 Plus:
-  English/German layout switching, 28 lighting looks, nine animations, and a
+  keyboard layout switching (e.g. EN/DE), 28 lighting looks, nine animations, and a
   wheel-driven preview gallery with custom colors, speed, and brightness controls.
 - **Compatibility:** Omarchy 4; tested on 4.0.4, keyboard USB `1b1c:2b11`, firmware `5.26.154`.
 - **Install:** `omarchy plugin add https://github.com/amoltyagi/omarchy-corsair --enable`
 - **Setup:** One-time device-access rule; `us,de` Hyprland layout configuration
-  for EN/DE switching. Both are documented in the README.
+  for layout switching. Both are documented in the README.
 
 ## Before submitting a specific commit
 

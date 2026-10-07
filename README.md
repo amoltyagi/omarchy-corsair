@@ -17,7 +17,7 @@ wears one of 28 lighting looks, from one popup in the bar. Supports the wired
 - **Theme sync.** Follows your Omarchy theme's `keyboard.rgb` automatically.
 - **Your colors.** Any hex color, with speed and brightness controls.
 - **Preview first.** The miniature keyboard shows the look's real per-key colors.
-- **EN / DE in one click.** Switch layouts from the same popup.
+- **Switch layouts in one click.** EN / DE or any layouts you configure, from the same popup.
 - **The volume dial keeps working.** Software lighting doesn't take it over.
 - **Safe by design.** Volatile lighting only; it never writes flash, profiles or firmware.
 
@@ -275,7 +275,7 @@ python3 tests/menu_smoke.py
 
 The hardware test briefly changes the lighting through every mode and checks
 sustained animation writes. The menu test checks rapid gallery cycling and
-EN/DE actions. Both restore the original selection; the menu test also restores
+layout actions. Both restore the original selection; the menu test also restores
 the original keyboard layout.
 
 ## Removal
