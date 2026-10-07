@@ -66,7 +66,19 @@ Panel.qml ──"omacorsair.py status"──▶ config + status.json + preview +
 | `/etc/udev/rules.d/70-omacorsair.rules` | Installed by `install-device-access.sh`. |
 | `/sys/class/hidraw/hidraw*` | Device discovery (`candidates()`), then `/dev/hidrawN`. |
 
-`status.json` keys: on success `connected`, `applied`, `mode`, `settings`, `started`, `phase0`, `speed`, `dial`, `error` (empty string). On a loop error only `connected: false`, `applied: false`, `error`.
+`status.json` keys:
+
+| Key | Meaning |
+|---|---|
+| `connected` | Keyboard open (in `hardware` mode: the device exists). `false` on every error status. |
+| `applied` | A frame has been sent and is current. `false` on every error status. |
+| `mode` | Active look id. |
+| `settings` | The validated config the daemon is using. |
+| `started`, `phase0`, `speed` | Animation clock origin (see Animation clock). |
+| `dial` | Whether the dial listener is open. |
+| `error` | Empty string when fine, otherwise the last error message. |
+
+On success all keys are present. On a loop error the status has `connected: false`, `applied: false`, `error` and `dial` (always known), plus `mode`, `settings` and the clock keys from the last config that validated. Those three are missing only if the very first config read has not succeeded yet. `Panel.qml` reads `device.connected`, `device.error` and `device.mode` (and falls back to `config.mode`), so an error status shows the message and the look is not lost.
 
 Config limits: file read capped at 4097 characters; unknown keys are rejected; `color`/`accent` are six hex digits (an optional `#` is stripped); `brightness` is an int 0..100; `vivid` is a bool; `speed` is an int 10..100.
 

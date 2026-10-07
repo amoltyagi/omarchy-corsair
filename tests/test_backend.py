@@ -384,14 +384,17 @@ class FakeKeyboard(backend.Keyboard):
         return self.sent.count(backend.HARDWARE_MODE)
 
 
-def run_daemon_passes(modes, keyboards, dial=None):
+def run_daemon_passes(modes, keyboards, dial=None, statuses=None):
     """Run the daemon loop for one iteration per entry of `modes`, one fake keyboard per connection.
+
+    An entry may also be an exception instance, which read_config() then raises. Status dicts
+    written by the daemon are appended to `statuses` when given.
 
     A fake clock advances 0.5 s per sleep, so animated looks produce a new frame every pass.
     Returns the Keyboard factory mock, the log mock and the os.close mock.
     """
     modes = [{"mode": mode} if isinstance(mode, str) else mode for mode in modes]
-    configs = iter(backend.validate_config(mode) for mode in modes)
+    configs = iter(modes)
     reads = []
     clock = [1000.0]
 
@@ -399,7 +402,10 @@ def run_daemon_passes(modes, keyboards, dial=None):
         reads.append(1)
         if len(reads) >= len(modes):
             backend.STOP = True
-        return next(configs)
+        entry = next(configs)
+        if isinstance(entry, Exception):
+            raise entry
+        return backend.validate_config(entry)
 
     def advance(_duration):
         clock[0] += 0.5
@@ -411,7 +417,8 @@ def run_daemon_passes(modes, keyboards, dial=None):
             patch.object(backend, "candidates", side_effect=lambda: iter([Path("/dev/hidraw2")])), \
             patch.object(backend, "Keyboard", factory), \
             patch.object(backend, "open_dial", **({"return_value": dial} if dial else {"side_effect": OSError("no dial")})), \
-            patch.object(backend, "atomic_json"), patch.object(backend, "log") as log, \
+            patch.object(backend, "atomic_json", side_effect=lambda path, value: statuses is None or statuses.append(value)), \
+            patch.object(backend, "log") as log, \
             patch.object(backend.signal, "signal"), patch.object(backend.os, "close") as close, \
             patch.object(backend.time, "monotonic", side_effect=lambda: clock[0]), \
             patch.object(backend.time, "sleep", side_effect=advance):
@@ -544,6 +551,45 @@ class ConnectionRecoveryTests(unittest.TestCase):
         factory, _, _ = run_daemon_passes(["aurora"] * 3, [keyboard], dial=dial)
         self.assertEqual(factory.call_count, 1)
         dial.close.assert_called_once()  # shutdown only
+
+    def test_error_status_keeps_mode_settings_and_dial(self):
+        statuses = []
+        dial = Mock()
+        keyboard = FakeKeyboard(fail={10: TimeoutError("no matching reply to command 0600: []")})
+        run_daemon_passes([{"mode": "aurora", "speed": 30}] * 3, [keyboard], dial=dial, statuses=statuses)
+        self.assertEqual(len(statuses), 3)
+        good, error, recovered = statuses
+        self.assertEqual((good["connected"], good["applied"], good["error"]), (True, True, ""))
+        self.assertEqual(error["connected"], False)
+        self.assertEqual(error["applied"], False)
+        self.assertEqual(error["error"], "no matching reply to command 0600: []")
+        self.assertEqual(error["mode"], "aurora")
+        self.assertEqual(error["settings"], backend.validate_config({"mode": "aurora", "speed": 30}))
+        self.assertEqual(error["dial"], True)  # a transient error leaves the dial open
+        # The animation clock is kept too, so the panel preview keeps matching the device.
+        self.assertEqual({key: error[key] for key in ("started", "phase0", "speed")},
+                         {key: good[key] for key in ("started", "phase0", "speed")})
+        self.assertEqual((recovered["connected"], recovered["applied"], recovered["error"]), (True, True, ""))
+
+    def test_error_status_after_teardown_reports_closed_dial(self):
+        statuses = []
+        first = FakeKeyboard(fail={10: OSError(errno.ENODEV, "No such device")})
+        run_daemon_passes(["aurora"] * 3, [first, FakeKeyboard()], dial=Mock(), statuses=statuses)
+        error = next(status for status in statuses if status["error"])
+        self.assertEqual((error["mode"], error["dial"], error["connected"]), ("aurora", False, False))
+
+    def test_error_before_any_config_has_no_mode_or_settings(self):
+        statuses = []
+        run_daemon_passes([ValueError("bad config"), "solid"], [FakeKeyboard()], statuses=statuses)
+        self.assertEqual(statuses[0], {"connected": False, "applied": False, "error": "bad config", "dial": False})
+        self.assertEqual(statuses[1]["mode"], "solid")
+
+    def test_config_error_keeps_last_known_mode_and_settings(self):
+        statuses = []
+        run_daemon_passes(["gaming", ValueError("bad config"), "gaming"], [FakeKeyboard()], statuses=statuses)
+        error = statuses[1]
+        self.assertEqual((error["mode"], error["error"], error["connected"]), ("gaming", "bad config", False))
+        self.assertEqual(error["settings"], backend.validate_config({"mode": "gaming"}))
 
     def test_device_gone_classification(self):
         for number in (errno.ENODEV, errno.EIO, errno.EPIPE, errno.ENOENT, errno.ENXIO):

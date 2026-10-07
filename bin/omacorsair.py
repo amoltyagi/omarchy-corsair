@@ -532,12 +532,13 @@ def run_daemon(raw=False):
     dial_error = None
     animation = restart_animation(time.monotonic(), DEFAULT_CONFIG["speed"])
     failures = 0
+    known_config = None  # last config that validated; error statuses keep reporting it
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
         while not STOP:
             try:
-                config = read_config()
+                config = known_config = read_config()
                 now = time.monotonic()
                 if config["mode"] != active_mode:
                     active_mode = config["mode"]
@@ -623,7 +624,11 @@ def run_daemon(raw=False):
                         except OSError:
                             pass
                         keyboard = None
-                status = {"connected": False, "applied": False, "error": message}
+                # Keep what the panel needs to stay useful (look, settings, preview clock, dial)
+                # alongside the error; only the connection fields change.
+                status = {"connected": False, "applied": False, "error": message, "dial": dial is not None}
+                if known_config is not None:
+                    status.update(mode=known_config["mode"], settings=known_config, **animation)
             if status != last_status:
                 atomic_json(STATUS_PATH, status)
                 last_status = status
