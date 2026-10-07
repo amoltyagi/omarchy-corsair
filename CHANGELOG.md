@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fix: the volume dial works while software lighting is active. The firmware reports it on vendor interface 02 in that mode; the helper now listens there read-only, drives `omarchy-audio-output-volume` (with a `wpctl` fallback), merges fast turns, and toggles mute once per press.
+- The udev rule now also grants interface 02. Existing users must re-run `install-device-access.sh` after updating.
+- Developer docs: `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, `docs/EXTENDING.md`.
+
 ## 1.2.0 — 2026-10-05
 
 - 28 lighting looks, including nine animated effects and 11 new static palettes.

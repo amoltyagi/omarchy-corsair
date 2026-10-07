@@ -29,8 +29,14 @@ bash ~/.config/omarchy/plugins/case.omacorsair/install-device-access.sh
 ```
 
 The device-access step opens desktop authentication and installs a narrowly
-scoped udev rule for the active local user on USB interface 01. The plugin itself
-runs as your user. The background helper retries until access is available.
+scoped udev rule for the active local user on USB interfaces 01 (lighting) and
+02 (read-only, for the volume dial). The plugin itself runs as your user. The
+background helper retries until access is available.
+
+**Updating from an earlier version:** the rule now also covers interface 02, so
+re-run `bash ~/.config/omarchy/plugins/case.omacorsair/install-device-access.sh`
+once after updating. Without it the volume dial stops working while software
+lighting is active.
 
 Configure English/German layouts as shown below if you want language switching.
 Optionally place the button before your audio widget:
@@ -172,6 +178,9 @@ omarchy-shell case.omacorsair surprise
   for more vivid LEDs, like Omakeychron. Manual colors use exact RGB.
 - Themes without `keyboard.rgb` leave the current lighting alone.
 - Sends a keepalive every ten seconds while software lighting is active.
+- The volume dial keeps working while software lighting is active. The helper
+  reads the dial read-only and runs `omarchy-audio-output-volume` (falling back
+  to `wpctl`); pressing the dial toggles mute.
 - Returns to built-in hardware lighting when stopped normally or disabled.
 
 Unlike the Keychron VIA implementation, this uses Corsair **volatile software
@@ -249,6 +258,13 @@ rm -rf ~/.local/state/omarchy/omacorsair
 ```
 
 Your `us,de` Hyprland configuration remains available to other layout switchers.
+
+## Developer docs
+
+- [AGENTS.md](AGENTS.md): orientation and required checks
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, data flow, process model
+- [docs/PROTOCOL.md](docs/PROTOCOL.md): USB interfaces, reports, color buffer, dial
+- [docs/EXTENDING.md](docs/EXTENDING.md): add palettes, animations, quick colors
 
 ## Contributing and publishing
 
